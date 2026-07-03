@@ -1,0 +1,1164 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Teller — Essens-Tracker</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Teller">
+<meta name="theme-color" content="#EEF2EC">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" type="image/png" href="icon.png">
+<style>html,body{margin:0;padding:0;background:#EEF2EC;-webkit-text-size-adjust:100%}</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef } = React;
+
+/* ---- Standalone-Betrieb (GitHub Pages): Speicher & API-Key ---- */
+/* Ersetzt Claudes window.storage durch localStorage — gleiche Schnittstelle. */
+window.storage = {
+  async get(key) {
+    const v = localStorage.getItem("teller:" + key);
+    return v === null ? null : { key, value: v };
+  },
+  async set(key, value) {
+    localStorage.setItem("teller:" + key, value);
+    return { key, value };
+  },
+  async delete(key) {
+    localStorage.removeItem("teller:" + key);
+    return { key, deleted: true };
+  },
+};
+const getApiKey = () => (localStorage.getItem("teller:apikey") || "").trim();
+const setApiKeyLS = (k) => localStorage.setItem("teller:apikey", (k || "").trim());
+
+/* ============================================================
+   TELLER — persönlicher Kalorien- & Makro-Tracker
+   Design: kühles Salbeiweiß, Tannengrün, Honig, Beere.
+   Display-Schrift: Fraunces · UI-Schrift: Instrument Sans
+   ============================================================ */
+
+const COLORS = {
+  bg: "#EEF2EC",
+  card: "#FFFFFF",
+  ink: "#1C2B24",
+  muted: "#6B7A70",
+  line: "#DCE5DC",
+  green: "#1E5B41",
+  greenSoft: "#E3EEE7",
+  amber: "#D98E2B",
+  amberSoft: "#F7EBD8",
+  berry: "#A34D5E",
+  berrySoft: "#F3E3E6",
+};
+
+const MEALS = [
+  { id: "breakfast", label: "Frühstück", share: 0.25, emoji: "🌅" },
+  { id: "lunch", label: "Mittagessen", share: 0.35, emoji: "☀️" },
+  { id: "dinner", label: "Abendessen", share: 0.3, emoji: "🌙" },
+  { id: "snack", label: "Snacks", share: 0.1, emoji: "🍎" },
+];
+
+const ACTIVITIES = [
+  { id: "1.2", label: "Sitzend, kaum Sport", f: 1.2 },
+  { id: "1.375", label: "Leicht aktiv (1–3× Sport/Wo)", f: 1.375 },
+  { id: "1.55", label: "Aktiv (3–5× Sport/Wo)", f: 1.55 },
+  { id: "1.725", label: "Sehr aktiv (6–7× Sport/Wo)", f: 1.725 },
+];
+
+const GOALS = [
+  { id: "lose", label: "Abnehmen", delta: -400 },
+  { id: "keep", label: "Halten", delta: 0 },
+  { id: "gain", label: "Aufbauen", delta: 300 },
+];
+
+/* GOURMET Sortimentsliste À la Carte HW 2021/22 — Nährwerte pro Portion.
+   Format: "ArtNr": [Name, kcal, Eiweiß g, Kohlenhydrate g, Fett g] */
+const GOURMET_DB = {
+  "2302005": ["Französische Zwiebelsuppe mit Croutons", 198, 2.8, 16.6, 12.0],
+  "2302008": ["BIO-Klare Gemüsesuppe", 80, 3.8, 10.3, 1.4],
+  "2302013": ["Italienische Tomatencremesuppe mit Reis", 124, 3.6, 16.1, 4.6],
+  "2302029": ["Gemüsebouillon mit Frittaten", 103, 3.4, 9.6, 5.2],
+  "2302033": ["BIO-Gemüsecremesuppe", 77, 2.2, 7.0, 3.6],
+  "2302036": ["Knoblauchrahmsuppe mit Weißbrotstückchen", 261, 4.6, 26.3, 15.0],
+  "2302043": ["Orientalische Linsensuppe", 142, 7.0, 19.0, 3.1],
+  "2302046": ["Steinpilz-Kartoffelsuppe", 49, 1.9, 8.2, 0.5],
+  "2302052": ["Rindsuppe mit Leberknödeln", 170, 13.4, 15.6, 5.5],
+  "2302054": ["Rindsuppe mit Nudeln", 85, 3.4, 8.6, 3.8],
+  "2302062": ["Rindsuppe mit Grießnockerl", 126, 4.1, 9.6, 7.7],
+  "2302064": ["Rindsuppe mit Frittaten", 120, 4.7, 9.1, 7.0],
+  "2302065": ["BIO-Karotten-Chilicremesuppe", 101, 1.7, 10.6, 4.8],
+  "2302066": ["Klare Gemüsesuppe mit Reibteig", 53, 1.9, 9.8, 0.5],
+  "2302069": ["Gourmet-Gemüsesuppe", 138, 3.1, 11.0, 8.6],
+  "2302087": ["Geflügeleinmachsuppe mit Semmelknödel", 180, 8.9, 19.0, 7.2],
+  "2302090": ["Gulaschsuppe", 179, 11.8, 14.2, 7.7],
+  "2302094": ["Rindsuppe mit Kaspressknödel", 259, 6.0, 10.6, 20.9],
+  "2301116": ["Fifty-Fifty Burger in Champignonsauce mit Gemüsereis", 623, 30.6, 59.4, 27.5],
+  "2301133": ["Sauerbraten mit Kartoffelknödeln und Rotkohl", 661, 42.1, 70.7, 20.8],
+  "2301293": ["Berliner Currywurst mit Wedges", 740, 25.0, 60.5, 42.5],
+  "2301297": ["Schweizer Laibchen mit Erbsen und Kartoffelpüree", 699, 36.4, 56.4, 34.0],
+  "2301416": ["Pinzgauer Kasnockn mit Zwiebel", 884, 34.5, 97.5, 38.0],
+  "2301431": ["Schwäbisches Linsengericht mit Spätzle", 877, 38.9, 85.3, 40.0],
+  "2301432": ["Feurige Schaschlikpfanne mit Reis", 799, 43.2, 75.9, 34.8],
+  "2301436": ["Debreziner mit Specklinsen und Serviettenknödel", 981, 49.0, 83.1, 47.9],
+  "2301444": ["Faschierter Braten mit Erdäpfelpüree", 757, 30.7, 44.2, 49.4],
+  "2301458": ["Holzhackerlaibchen mit Erdäpfelpüree", 930, 34.5, 81.5, 50.0],
+  "2301459": ["Bernerwürstel mit Pommes frites und pikanter Sauce", 1032, 31.3, 82.8, 61.6],
+  "2301465": ["Gebackener Camembert mit Bratkartoffeln und Preiselbeeren", 704, 26.2, 66.2, 35.5],
+  "2301710": ["Palatschinken Cordon bleu mit Bratkartoffeln", 972, 26.6, 115.2, 43.2],
+  "2301737": ["Leberkäse Cordon bleu mit Petersilkartoffeln", 1071, 34.0, 63.0, 74.3],
+  "2301790": ["Chili con Carne mit feinem Gebäck", 713, 35.8, 82.7, 21.5],
+  "2301812": ["Puszta Gulasch mit Hörnchen", 616, 43.5, 54.5, 23.5],
+  "2301816": ["Faschierte Laibchen mit Gemüse und Kartoffelpüree", 636, 29.7, 38.7, 38.3],
+  "2301818": ["Knödelteller", 763, 27.8, 84.7, 31.3],
+  "2301820": ["Riesenbratwurst mit Sauerkraut und Erdäpfelpüree", 926, 22.5, 29.5, 77.5],
+  "2301827": ["Herzhafte Fleischknödel mit Kümmelkraut", 799, 23.3, 59.8, 48.8],
+  "2301846": ["Faschierte Laibchen Stefanie mit Petersilkartoffeln", 615, 36.9, 52.2, 27.0],
+  "2301875": ["Cevapcici mit Letscho und Reis", 618, 31.5, 86.5, 15.0],
+  "2301460": ["Pasta Variation", 525, 16.0, 74.0, 16.8],
+  "2301468": ["Nudel-Gemüsetascherl in Tomaten-Obers-Sauce", 480, 18.0, 56.4, 18.0],
+  "2301489": ["Cremige Schinkenfleckerl", 766, 34.2, 67.5, 38.3],
+  "2301495": ["Lauchrahmnudeln mit gebratenen Hühnerstücken", 549, 34.8, 55.6, 19.6],
+  "2301568": ["Treccine Firenze mit gebratenen Hühnerstücken", 576, 34.2, 65.7, 18.5],
+  "2301702": ["Saftige Krautfleckerl", 641, 18.1, 86.4, 21.5],
+  "2301703": ["Gefüllte Nudeltaschen in Tomaten-Basilikum-Sauce", 455, 17.6, 58.8, 13.2],
+  "2301708": ["Thai Nudeln mit Gemüse und Hühnerfleisch", 665, 37.4, 70.7, 23.9],
+  "2301714": ["Kärntner Kasnudeln mit warmem Kraut", 561, 14.1, 61.1, 25.9],
+  "2301722": ["Spaghetti Carbonara", 694, 29.0, 79.5, 27.5],
+  "2301727": ["Spaghetti mit Veggie-Bolognese", 509, 18.5, 78.8, 11.3],
+  "2301732": ["Italienische Lasagne in Tomatensauce", 472, 29.5, 33.5, 23.0],
+  "2301735": ["Lachs-Nudeln mit Dillkräutersauce", 662, 34.5, 53.4, 33.6],
+  "2301747": ["Gnocchi mit Tomaten-Mozzarellasauce", 346, 8.4, 63.2, 6.0],
+  "2301762": ["Spinatcannelloni mit Tomatenragout und Mozzarella", 522, 20.2, 68.8, 16.8],
+  "2301763": ["Makkaroni mit italienischem Fleischsugo", 573, 23.4, 83.3, 14.4],
+  "2301774": ["BIO-Tortelloni mit Spinat-Käsesauce", 582, 24.6, 55.4, 27.7],
+  "2301788": ["Kürbis-Ravioli in Frischkäsesauce", 665, 21.6, 59.2, 36.8],
+  "2301795": ["Spaghettoni mit Rucola und getrüffelten Pilzen", 474, 14.0, 63.6, 16.4],
+  "2301796": ["Spaghetti Bolognese", 580, 27.5, 72.5, 18.0],
+  "2301899": ["Linguine Pesto Rosso mit Weichkäse und Speck", 847, 25.6, 65.9, 52.1],
+  "2302422": ["Gebratene Gnocchi in Spinat-Österkronsauce", 586, 16.3, 73.5, 24.6],
+  "2302432": ["Spinat-Ricotta-Lasagne", 502, 22.5, 56.5, 18.5],
+  "2302465": ["Fleischnudeln", 826, 37.5, 108.0, 25.0],
+  "2301603": ["Gebratener Lachs auf Zitronennudeln mit Broccoli", 659, 45.6, 50.8, 28.8],
+  "2301614": ["Gebackener Alaska-Seelachs mit Petersilkartoffeln XS", 314, 21.8, 31.5, 10.3],
+  "2301615": ["Österr. Forellenfilet mit Petersilkartoffeln und Fisolen", 534, 24.3, 34.6, 30.8],
+  "2301617": ["Rotes Fischcurry mit Sesamreis", 665, 24.8, 76.4, 27.6],
+  "2301620": ["Seelachsstücke auf Gemüse-Zartweizenrisotto", 602, 38.7, 72.9, 13.5],
+  "2301624": ["Gebackene Seelachsfilets mit Petersilkartoffeln", 567, 35.0, 62.0, 18.6],
+  "2301631": ["Schlemmerfilet Bordelaise mit Kartoffeln und Karotten", 491, 25.8, 43.7, 22.0],
+  "2301632": ["Wildlachs im Blätterteig mit mediterranem Gemüse", 591, 17.9, 38.0, 38.8],
+  "2301650": ["Kabeljau in Senfsauce mit Bandnudeln und Karotten", 461, 32.4, 43.5, 16.4],
+  "2301651": ["Seelachsfilets in Kräuterbackteig mit Gemüsereis", 674, 42.2, 68.4, 24.3],
+  "2301653": ["Gebackener Alaska-Seelachs mit Bratkartoffeln", 592, 41.8, 54.0, 22.3],
+  "2301789": ["Shrimps-Penne mit mediterranem Gemüse und Artischocken", 531, 31.6, 48.0, 21.6],
+  "2310662": ["Fischfilet Pomodoro auf Blattspinat mit Treccine", 716, 48.6, 59.0, 30.2],
+  "2301506": ["Ausgelöstes Backhenderl mit Gemüsereis", 773, 43.2, 86.8, 26.4],
+  "2301507": ["Acht Schätze mit Basmatireis", 419, 23.2, 64.9, 6.0],
+  "2301514": ["Hühnerbrustfilet in Steinpilzrahmsauce mit Nudeln", 641, 44.6, 65.3, 20.7],
+  "2301519": ["Limetten-Kokoshuhn mit Basmatireis", 669, 29.9, 66.2, 29.4],
+  "2301525": ["Mango Chicken Curry mit Basmatireis", 534, 31.2, 65.6, 14.5],
+  "2301529": ["Tortilla con Pollo", 684, 25.9, 86.3, 23.8],
+  "2301537": ["Hühnerbrust in Kräuterkruste mit Gemüsenudeln", 530, 42.0, 54.6, 13.9],
+  "2301543": ["Hühnerschnitzel in Kürbispanade mit Kräuterreis", 873, 50.8, 119.6, 20.0],
+  "2301544": ["Hühnergeschnetzeltes Luzerner Art mit Nockerln", 435, 31.1, 46.6, 13.0],
+  "2301560": ["Hühnerbrustfilet in Kräuterrahmsauce mit Spätzle", 707, 45.2, 60.3, 29.6],
+  "2301565": ["Gebratene Hühnerbrust in Zwiebelsauce mit Bandnudeln", 467, 42.6, 44.3, 11.5],
+  "2301567": ["Chicken Wings mit Spicy Wedges und Ketchup", 777, 45.5, 58.0, 38.5],
+  "2301572": ["Gemüse-Mehrkornrisotto mit Huhn und Safran", 557, 25.6, 58.4, 22.0],
+  "2301580": ["Hühner-Cordon-bleu mit Risipisi", 692, 53.6, 76.4, 18.0],
+  "2301586": ["Crispy Chicken mit Pommes frites und Ketchup", 843, 47.3, 91.3, 29.9],
+  "2301590": ["Gefüllte Hühneroberkeule mit Ofengemüse und Kartoffeln", 480, 36.2, 44.2, 16.0],
+  "2301594": ["Paprikahendl mit Nockerln", 706, 39.6, 54.5, 35.6],
+  "2302512": ["Hühnergeschnetzeltes mit Gemüse und Pastareis", 721, 30.1, 66.7, 34.8],
+  "2302514": ["Hühnerbrust überbacken mit Champignons und Käse", 499, 42.4, 42.8, 16.0],
+  "2302536": ["Pikantes Hühnercurry mit Basmatireis", 711, 33.2, 73.1, 30.7],
+  "2302574": ["Huhn im Tempurateig mit Basmatireis, süß-sauer", 519, 30.2, 81.0, 7.2],
+  "2310684": ["Entenfilet mit Rotkraut und Erdäpfelknödeln", 468, 46.0, 40.4, 12.0],
+  "2301405": ["Rahmfisolen mit Röstinchen", 449, 8.0, 51.6, 20.8],
+  "2301411": ["Karfiol-Käsemedaillons mit Herbstgemüse", 483, 18.0, 37.4, 26.6],
+  "2301418": ["Frischkäse-Kartoffellaibchen mit Rotkraut", 521, 10.4, 57.2, 26.1],
+  "2301424": ["Bunte Gemüsepaella", 519, 13.1, 76.1, 16.2],
+  "2301438": ["Gemüseschnitzel in Cornflakes-Panade mit Krengemüse", 478, 13.7, 50.2, 22.0],
+  "2301456": ["Vegetarischer Linseneintopf mit Serviettenknödel", 587, 31.7, 83.0, 10.6],
+  "2301484": ["Broccolipfandl", 628, 25.5, 47.5, 35.0],
+  "2301492": ["BIO-Kohlgemüse mit Salzerdäpfel", 317, 5.9, 35.1, 15.3],
+  "2301742": ["Kartoffelpuffer mit Rote-Rüben-Gemüse", 377, 9.0, 48.2, 13.8],
+  "2301802": ["BIO-Cremespinat mit Erdäpfelschmarren", 365, 12.9, 41.4, 13.8],
+  "2301824": ["Mexikanischer Fisolen-Bohneneintopf mit Maisreis", 515, 18.0, 73.8, 13.5],
+  "2301834": ["Blattspinat mit Spiegelei und Kartoffeln", 501, 13.3, 37.3, 31.3],
+  "2301896": ["Schwammerlgulasch mit Serviettenknödel", 545, 20.7, 56.7, 23.9],
+  "2302426": ["Gemüsestrudel mit Petersilkartoffeln und Kerbelsauce", 436, 12.6, 44.8, 21.1],
+  "2301200": ["Cordon bleu in Kürbispanade mit Erdäpfelschmarren", 1032, 55.0, 55.9, 63.8],
+  "2301202": ["Mostbraten mit Schmalz-Erdäpfeln und Ofengemüse", 682, 44.1, 39.2, 35.6],
+  "2301205": ["Schweinskarree mit Kartoffelgratin und Fisolen", 614, 39.8, 29.3, 35.5],
+  "2301206": ["Schweinsmedaillons in Champignonrahm mit Käsespätzle", 637, 44.5, 51.9, 27.0],
+  "2301212": ["Cordon bleu vom Schwein mit Petersilkartoffeln", 909, 46.9, 53.3, 55.0],
+  "2301213": ["Bratenteller mit Sauerkraut und Serviettenknödel", 908, 62.2, 51.2, 48.4],
+  "2301218": ["Schweinsschnitzel XS mit Risipisi", 483, 28.3, 58.2, 14.0],
+  "2301219": ["Schweinskotelett mit Specklinsen und Kartoffelknödeln", 710, 54.7, 62.4, 24.5],
+  "2301227": ["Mailänder Schnitzel mit Spaghetti und Tomatensauce", 596, 44.7, 55.5, 20.6],
+  "2301230": ["Schweinsbraten mit Krautsalat und Serviettenknödel", 806, 57.5, 44.0, 42.5],
+  "2301249": ["Grillplatte mit Bratkartoffeln", 969, 53.6, 58.5, 56.7],
+  "2301280": ["Gebackene Schweinsschnitzel mit Pommes frites", 926, 48.8, 84.0, 42.0],
+  "2301282": ["Braumeister Cordon bleu mit Erdäpfelschmarren", 638, 43.2, 67.6, 19.3],
+  "2301286": ["Gebackene Surschnitzel mit Erdäpfelgröstl", 823, 42.5, 89.0, 31.0],
+  "2301552": ["Hirschbraten mit Rotkraut und Kroketten", 493, 42.6, 36.6, 17.2],
+  "2301589": ["Wildschweingulasch mit Schupfnudeln", 986, 43.7, 80.6, 53.1],
+  "2301597": ["Hirschragout mit Apfel-Rotkraut und Erdäpfelknödeln", 535, 34.7, 51.8, 18.0],
+  "2301312": ["Kalbsbutterschnitzel mit Gemüse und Kartoffelpüree", 550, 27.6, 44.6, 27.1],
+  "2301100": ["Rindfleisch Stroganoff mit Reis und Romanobohnen", 536, 32.9, 57.2, 17.6],
+  "2301102": ["Vanillerostbraten mit Kroketten", 531, 18.6, 39.1, 32.3],
+  "2301105": ["Beiried in Wasabi-Sojasauce mit Basmatireis", 517, 19.3, 79.4, 11.3],
+  "2301106": ["Mexikanischer Feuertopf mit cremiger Polenta", 538, 20.0, 60.0, 20.5],
+  "2301108": ["Rindsroulade mit Hörnchen", 551, 35.0, 58.3, 18.0],
+  "2301118": ["Rindsschnitzel in Senfsauce mit Hörnchen", 512, 40.0, 43.6, 18.8],
+  "2301126": ["Wiener Zwiebelrostbraten mit Kroketten", 570, 20.1, 43.1, 33.2],
+  "2301142": ["Burgunder Rindsbraten mit Spätzle", 530, 46.0, 49.6, 15.2],
+  "2301148": ["Rindsgulasch mit Spätzle", 638, 53.5, 52.5, 22.5],
+  "2301162": ["Scharfe Rindfleischbällchen mit Wedges", 705, 31.8, 64.4, 33.7],
+  "2301176": ["Tex-Mex-Burger mit Spicy Wedges", 632, 35.3, 52.7, 29.3],
+  "2301180": ["Gefüllter Paprika in Tomatensauce mit Erdäpfelschmarren", 495, 17.5, 61.0, 18.0],
+  "2301901": ["Topfenpalatschinken in Vanillesauce", 676, 23.9, 75.4, 30.4],
+  "2301906": ["Flaumige Topfennockerl mit Beerenragout", 613, 18.9, 91.7, 17.2],
+  "2301914": ["Zwetschkenknödel mit Butterbröseln", 877, 26.0, 132.4, 24.4],
+  "2301915": ["Scheiterhaufen mit Vanillesauce", 723, 18.5, 105.8, 24.2],
+  "2301918": ["BIO-Apfelschmarren", 637, 15.1, 94.2, 21.0],
+  "2301939": ["Schoko-Nuss-Palatschinken mit Apfelstücken", 665, 14.1, 71.1, 35.1],
+  "2301950": ["Milchrahmstrudel in Vanillesauce", 687, 22.1, 103.4, 19.6],
+  "2301972": ["Gschupfte Mohnnudeln", 947, 20.8, 143.2, 29.2],
+  "2301990": ["Apfelringe mit Vanille-Zimtsauce", 473, 9.6, 70.7, 15.6],
+  "2310670": ["Powidltascherl", 953, 18.2, 157.9, 25.6],
+  "2301931": ["Nougat-Knödel", 615, 17.2, 85.8, 21.3],
+  "2305564": ["Schokokuchen in Schokosauce", 491, 7.4, 47.7, 29.3],
+  "2301986": ["Zwetschkenröster", 160, 1.0, 34.6, 0.2],
+  "2305153": ["Feines Apfelmus", 110, 0.5, 22.0, 1.2],
+  "2302048": ["BIO-Kürbiscremesuppe", 117, 1.7, 9.6, 7.4],
+  "2301828": ["BIO-Faschierte Laibchen mit Kürbisgemüse", 689, 27.4, 56.2, 37.4],
+  "2301897": ["Fifty-Fifty Burger mit Linsencurry und Kürbis", 574, 31.6, 55.6, 22.4],
+  "2302413": ["Gnocchi mit Kürbissauce", 439, 6.7, 65.6, 15.8],
+  "2301867": ["BIO-Kürbisgemüse mit Erdäpfelschmarren", 501, 7.7, 49.1, 27.9],
+  "2301871": ["BIO-Gebackener Kürbis mit Kartoffeln und Knoblauchdip", 745, 16.1, 77.7, 38.6],
+  "2302411": ["Frischkäse-Kartoffellaibchen mit Kürbisgemüse", 599, 10.4, 53.6, 36.5],
+  "2302415": ["Marokkanische Kichererbsenpfanne mit Kürbis", 529, 20.6, 65.5, 15.2],
+  "2301815": ["Tiroler Gröstl mit Spiegelei", 781, 42.7, 55.7, 40.8],
+  "2301847": ["Grammelknödel mit schlampigem Kraut", 1002, 24.5, 71.0, 65.0],
+  "2301852": ["Krautstrudel mit Petersilkartoffeln und Kerbelsauce", 536, 15.8, 68.0, 19.8],
+  "2301777": ["Hascheehörnchen mit Bratenfleisch", 626, 28.8, 78.4, 20.8],
+  "2301474": ["Pinzgauer Kaspressknödel mit Kümmelkraut", 601, 28.0, 49.2, 29.2],
+  "2301268": ["Szegediner Krautfleisch mit Salzkartoffeln", 654, 38.5, 35.8, 38.0],
+  "2301144": ["Mühlviertler Rindsgeschnetzeltes mit Spätzle", 471, 33.1, 47.3, 15.1],
+  "2301934": ["Grießschmarren mit steirischem Apfelmus", 632, 14.8, 111.6, 12.4],
+  "2301626": ["Wiener Wels auf Krengemüse mit Salzerdäpfel", 525, 24.0, 32.0, 31.6],
+  "2301713": ["BIO-Nudel-Gemüsepfanne mit Schinken und Käsesauce", 515, 25.7, 55.8, 19.4],
+  "2301569": ["BIO-Hühnerragout mit Champignons und Spiralen", 596, 29.8, 57.5, 25.6],
+  "2301588": ["Fifty-Fifty Burger mit Kichererbsengemüse", 450, 32.8, 44.0, 13.2],
+  "2301449": ["BIO-Ofengemüse mit Schnittlauchdip", 535, 11.7, 47.3, 29.3],
+  "2302417": ["BIO-Butternusskürbiscurry mit Basmatireis", 390, 11.3, 65.3, 7.2],
+  "2302434": ["BIO-Veggie-Grünkern-Burger mit Erbsen", 530, 25.2, 64.7, 13.4],
+  "2302483": ["BIO-Gemüsegulasch mit Nockerl", 478, 12.2, 58.8, 19.3],
+  "2302044": ["Asiatische Nudelsuppe mit Hühnerfleisch", 99, 6.7, 9.6, 3.1],
+  "2301604": ["Pesto-Wildlachs mit Fisolen", 349, 30.3, 12.9, 15.3],
+  "2301701": ["Würzige Asianudeln mit knackigem Gemüse", 475, 16.4, 74.3, 10.1],
+  "2301705": ["Tagliatelle mit Shrimps und Mango-Papayasauce", 538, 25.2, 75.6, 13.6],
+  "2302428": ["Leichte Frühlingsnudeln mit buntem Gemüse", 479, 15.2, 64.0, 16.0],
+  "2301532": ["Orange Chicken mit Asia-Gemüse und Basmatireis", 498, 30.2, 76.4, 6.3],
+  "2301571": ["Tandoori-Huhn mit Minz-Couscous", 535, 36.0, 56.0, 16.8],
+  "2301591": ["Pulled Chicken Bowl", 530, 35.2, 68.6, 10.6],
+  "2301475": ["Buddhistische Fastenspeise mit Basmatireis", 351, 9.6, 61.6, 5.2],
+  "2302429": ["Veggie Protein Burger mit Kräuterpüree und Gemüse", 520, 21.1, 32.0, 31.6],
+  "2301499": ["Knackiges Beilagen-Gemüse natur", 119, 5.6, 8.8, 5.2],
+  "2305123": ["Krautsalat", 87, 1.6, 10.8, 3.0],
+  "2305124": ["Cole Slaw", 294, 2.6, 12.2, 25.0],
+  "2305130": ["Roter Rübensalat", 98, 1.4, 14.6, 0.2],
+  "2305131": ["Gurkensalat mit Dille und Rahm", 136, 6.0, 9.0, 7.2],
+  "92588": ["BIO-Vollkornriegel", 244, 9.4, 34.9, 5.8],
+  "92593": ["BIO-Vollkornecke", 247, 8.6, 32.4, 7.7],
+  "92957": ["Flaguette natur", 236, 8.1, 46.0, 1.5],
+  "96391": ["Bierbrezen", 246, 8.0, 42.8, 3.7],
+  "96393": ["BIO-Sonnenblumenweckerl", 239, 9.1, 27.3, 9.8],
+  "96397": ["Semmel", 150, 5.0, 29.0, 1.2],
+  "96398": ["BIO-Kornspitz", 196, 7.8, 34.8, 1.7],
+  "92656": ["Dr. Oetker Ofenfrische Diavolo", 862, 35.6, 113.4, 27.5],
+  "92658": ["Dr. Oetker Ofenfrische Schinken-Champignon", 770, 34.4, 112.2, 18.2],
+  "93875": ["Wagner Big City Pizza Mexico City", 1083, 43.0, 124.7, 40.9],
+  "95718": ["Wagner Big City Pizza Boston", 1126, 37.8, 110.9, 55.0],
+  "95722": ["Dr. Oetker Ristorante Mozzarella glutenfrei", 808, 37.0, 77.7, 37.0],
+  "95601": ["Ciabatta Diavolo", 641, 19.2, 59.2, 22.8],
+  "96922": ["Baguette Provence", 405, 19.8, 42.9, 16.5],
+  "96923": ["Baguette Rustikal", 521, 19.8, 39.6, 30.6],
+  "96908": ["Pizza mit Käse und Putenschinken", 509, 26.0, 65.0, 15.1],
+  "96916": ["Pizza Margherita", 519, 25.0, 67.6, 14.8],
+  "92637": ["BIO-Pizza mit Spinat und Käse", 521, 22.6, 60.0, 12.2],
+  "95525": ["Cheese Cake American Style", 393, 6.5, 33.6, 25.3],
+  "9505577": ["Schoko-Kokoskuchen (Konditorei)", 492, 5.6, 53.2, 27.8],
+  "9510054": ["Mohn-Himbeerkuchen", 553, 8.3, 57.8, 30.6],
+  "9705514": ["Kardinalschnitte", 307, 4.8, 55.0, 7.2],
+  "9705550": ["Sacherschnitte", 370, 4.8, 50.9, 15.9],
+  "9705710": ["Cremeschnitte", 304, 3.8, 34.6, 16.6],
+  "9710043": ["Muffin Schoko-Banane", 263, 2.9, 29.0, 14.6],
+  "9710078": ["Gourmelino-Schokowürfel", 108, 1.1, 11.4, 6.4],
+  "9710093": ["Brownie Cheese Cake", 184, 7.8, 26.0, 4.3],
+  "9725502": ["Esterhazyschnitte", 455, 5.3, 45.1, 27.5],
+  "9725504": ["Kuchenvariation", 157, 2.5, 18.5, 8.1],
+  "9710104": ["Schokomousse mit Amarenakirschen", 353, 4.8, 30.9, 22.5],
+  "9710106": ["Tiramisu", 318, 5.9, 19.3, 23.9],
+  "92740": ["Schoko-Donut mit Milka-Schokolade", 300, 4.2, 32.4, 16.8],
+  "95542": ["Nussschnecke", 460, 6.7, 46.8, 26.4],
+  "95544": ["Topfengolatsche", 414, 10.2, 38.0, 24.2],
+  "95545": ["Mini-Plunder gemischt", 130, 2.6, 12.4, 7.6],
+  "9710094": ["Krapfen", 279, 6.8, 36.0, 11.3],
+  "9710095": ["Croissant", 183, 3.0, 15.0, 12.1],
+  "9710107": ["Pikanter Muffin Schinken & Lauch", 169, 6.1, 13.4, 10.0],
+  "9710108": ["Pikanter Muffin Spinat & Feta", 199, 5.7, 14.5, 12.8],
+  "9710109": ["Pikanter Muffin Tomate & Mozzarella", 208, 4.9, 14.6, 13.6],
+  "92716": ["Magnum Caramel & Nuts", 181, 2.7, 19.2, 10.4],
+  "92862": ["Magnum Mini Yoghurt & Raspberry", 115, 1.1, 11.3, 7.2],
+  "92867": ["Geladoro Crememango & Topfen", 243, 3.2, 34.7, 10.2],
+  "92869": ["Ben & Jerry's Chocolate Fudge Brownie", 182, 3.0, 22.3, 8.6],
+  "95306": ["Cornetto Erdbeer", 187, 1.6, 28.0, 7.8],
+  "95308": ["Nogger", 202, 2.3, 17.4, 14.1],
+  "95312": ["Erdbeer-Combino", 153, 1.3, 18.0, 8.4],
+  "95335": ["Jolly", 83, 1.2, 14.7, 2.0],
+  "95388": ["Cornetto Classico", 239, 2.5, 25.0, 14.0],
+  "95391": ["Magnum Classic", 259, 3.1, 24.9, 16.3],
+  "95600": ["Magnum Mandel", 283, 4.2, 25.8, 18.1],
+  "95696": ["Bounty Eis", 174, 2.8, 16.8, 10.6],
+  "95699": ["Mars Eis", 204, 2.3, 23.5, 11.0],
+  "9505503": ["Brownie", 235, 2.9, 25.4, 13.4],
+  "9505509": ["BIO-Zitronenkuchen", 212, 3.2, 28.8, 9.1],
+  "9505513": ["Ameisenkuchen", 272, 3.5, 25.6, 17.1],
+  "9505518": ["Schoko-Kokoskuchen (Blech)", 306, 3.7, 28.8, 19.1],
+  "9505521": ["BIO-Kakaokuchen", 202, 3.3, 27.0, 8.7],
+  "9505522": ["BIO-Karottenkuchen", 258, 3.9, 32.6, 12.1],
+  "9505526": ["BIO-Apfelkuchen", 257, 3.4, 28.1, 14.3],
+  "9505574": ["Streuselkuchen mit Apfel", 303, 3.8, 33.6, 16.7],
+  "9510084": ["Vollkorn-Schokokuchen", 328, 5.9, 22.2, 23.5],
+  "96742": ["Ketchup mild", 51, 0.5, 11.4, 0.1],
+  "96820": ["Hartkäse gerieben", 47, 4.3, 0.3, 3.2],
+  "96825": ["Sauce Tartare", 136, 0.2, 2.8, 13.6],
+};
+
+const normNr = (s) => String(s || "").replace(/\D/g, "");
+const fmtNr = (n) => (n.length > 4 ? n.slice(0, -4) + " " + n.slice(-4) : n);
+const gourmetDraft = (nr, d, src) => ({
+  name: d[0], kcal: d[1], protein: d[2], carbs: d[3], fat: d[4],
+  portion: "1 Portion", note: `GOURMET Art.Nr. ${fmtNr(nr)} — ${src}`, _gnr: nr,
+});
+
+/* ---------------- Utils ---------------- */
+
+const pad = (n) => String(n).padStart(2, "0");
+const dateKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const r = (n) => Math.round(Number(n) || 0);
+
+function labelForDate(d) {
+  const today = dateKey(new Date());
+  const yest = dateKey(new Date(Date.now() - 86400000));
+  const k = dateKey(d);
+  const nice = d.toLocaleDateString("de-AT", { weekday: "short", day: "numeric", month: "long" });
+  if (k === today) return `Heute, ${d.toLocaleDateString("de-AT", { day: "numeric", month: "long" })}`;
+  if (k === yest) return `Gestern, ${d.toLocaleDateString("de-AT", { day: "numeric", month: "long" })}`;
+  return nice;
+}
+
+function calcTargets(p) {
+  const w = Number(p.weight), h = Number(p.height), a = Number(p.age);
+  const bmr = p.sex === "m" ? 10 * w + 6.25 * h - 5 * a + 5 : 10 * w + 6.25 * h - 5 * a - 161;
+  const act = ACTIVITIES.find((x) => x.id === p.activity)?.f || 1.375;
+  const goal = GOALS.find((g) => g.id === p.goal) || GOALS[1];
+  const kcal = Math.max(1200, Math.round((bmr * act + goal.delta) / 10) * 10);
+  const protein = Math.round(w * (p.goal === "lose" ? 2.0 : 1.8));
+  const fat = Math.round((kcal * 0.28) / 9);
+  const carbs = Math.max(0, Math.round((kcal - protein * 4 - fat * 9) / 4));
+  return { kcal, protein, carbs, fat };
+}
+
+function parseAIJson(text) {
+  const clean = text.replace(/```json|```/g, "").trim();
+  const start = clean.indexOf("{");
+  const end = clean.lastIndexOf("}");
+  if (start === -1 || end === -1) throw new Error("Kein JSON gefunden");
+  const obj = JSON.parse(clean.slice(start, end + 1));
+  if (obj.error) throw new Error(String(obj.error));
+  return {
+    nr: obj.nr ? String(obj.nr).trim() : "",
+    name: String(obj.name || "Mahlzeit"),
+    kcal: r(obj.kcal),
+    protein: r(obj.protein),
+    carbs: r(obj.carbs),
+    fat: r(obj.fat),
+    portion: obj.portion ? String(obj.portion) : "",
+    note: obj.note ? String(obj.note) : "",
+  };
+}
+
+async function callClaude(content, useSearch = false) {
+  const key = getApiKey();
+  if (!key) throw new Error("Kein API-Key hinterlegt — öffne die Einstellungen (⚙) und trag deinen Anthropic-API-Key ein.");
+  const body = {
+    model: "claude-sonnet-4-6",
+    max_tokens: 1024,
+    messages: [{ role: "user", content }],
+  };
+  if (useSearch) body.tools = [{ type: "web_search_20250305", name: "web_search" }];
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": key,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message || "API-Fehler");
+  const text = (data.content || []).map((i) => (i.type === "text" ? i.text : "")).join("\n");
+  return parseAIJson(text);
+}
+
+const JSON_RULES =
+  'Antworte AUSSCHLIESSLICH mit einem einzigen JSON-Objekt, ohne Markdown, ohne Erklärung, exakt in diesem Format: ' +
+  '{"name":"kurzer Gerichtname auf Deutsch (max. 4 Wörter)","kcal":Zahl,"protein":Zahl,"carbs":Zahl,"fat":Zahl,"portion":"geschätzte Gesamtmenge, z.B. 350 g","note":"ein kurzer Satz zur Einschätzung"} ' +
+  "Alle Werte gelten für die GESAMTE Portion. protein, carbs und fat in Gramm, als ganze Zahlen. Schätze realistisch, nicht vorsichtig-niedrig.";
+
+function fileToCompressedBase64(file, maxDim = 1024) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.max(1, Math.round(img.width * scale));
+          canvas.height = Math.max(1, Math.round(img.height * scale));
+          canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+          resolve({ base64: dataUrl.split(",")[1], preview: dataUrl });
+        } catch (e) { reject(e); }
+      };
+      img.onerror = () => reject(new Error("Bild konnte nicht gelesen werden"));
+      img.src = reader.result;
+    };
+    reader.onerror = () => reject(new Error("Datei konnte nicht gelesen werden"));
+    reader.readAsDataURL(file);
+  });
+}
+
+/* ---------------- Storage ---------------- */
+
+async function loadJSON(key, fallback) {
+  try {
+    const res = await window.storage.get(key);
+    return res ? JSON.parse(res.value) : fallback;
+  } catch { return fallback; }
+}
+async function saveJSON(key, value) {
+  try { await window.storage.set(key, JSON.stringify(value)); } catch (e) { console.error("Speichern fehlgeschlagen", e); }
+}
+
+const emptyDay = () => ({ meals: { breakfast: [], lunch: [], dinner: [], snack: [] } });
+
+/* ---------------- Kleine Bausteine ---------------- */
+
+function Seg({ options, value, onChange }) {
+  return (
+    <div style={{ display: "flex", background: COLORS.greenSoft, borderRadius: 12, padding: 3, gap: 3 }}>
+      {options.map((o) => (
+        <button key={o.id} onClick={() => onChange(o.id)}
+          style={{
+            flex: 1, minHeight: 42, border: "none", borderRadius: 10, cursor: "pointer",
+            fontFamily: "inherit", fontSize: 13, fontWeight: 600,
+            background: value === o.id ? COLORS.green : "transparent",
+            color: value === o.id ? "#fff" : COLORS.ink,
+            transition: "background .15s, color .15s",
+          }}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Field({ label, suffix, children }) {
+  return (
+    <label style={{ display: "block" }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.muted, marginBottom: 6 }}>{label}{suffix ? ` (${suffix})` : ""}</div>
+      {children}
+    </label>
+  );
+}
+
+const inputStyle = {
+  width: "100%", boxSizing: "border-box", minHeight: 48, padding: "12px 14px",
+  border: `1.5px solid ${COLORS.line}`, borderRadius: 12, fontSize: 16,
+  fontFamily: "inherit", color: COLORS.ink, background: "#fff", outline: "none",
+};
+
+function KeyHint() {
+  return (
+    <div style={{ background: COLORS.amberSoft, borderRadius: 12, padding: "10px 14px", fontSize: 13, color: "#7A5416", lineHeight: 1.45 }}>
+      Für die KI-Analyse brauchst du einmalig deinen Anthropic-API-Key → Einstellungen (⚙) am Startbildschirm. Alles andere funktioniert auch ohne.
+    </div>
+  );
+}
+
+function Ring({ eaten, target }) {
+  const size = 218, stroke = 15, rad = (size - stroke) / 2, circ = 2 * Math.PI * rad;
+  const pct = target > 0 ? Math.min(1, eaten / target) : 0;
+  const over = eaten > target;
+  const left = target - eaten;
+  return (
+    <div style={{ position: "relative", width: size, height: size, margin: "0 auto" }}>
+      <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }} aria-hidden="true">
+        <circle cx={size / 2} cy={size / 2} r={rad} fill="none" stroke={COLORS.line} strokeWidth={stroke} />
+        <circle cx={size / 2} cy={size / 2} r={rad} fill="none"
+          stroke={over ? COLORS.berry : COLORS.green} strokeWidth={stroke} strokeLinecap="round"
+          strokeDasharray={circ} strokeDashoffset={circ * (1 - pct)}
+          style={{ transition: "stroke-dashoffset .6s ease, stroke .3s" }} />
+      </svg>
+      <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+        <div className="display" style={{ fontSize: 52, lineHeight: 1, color: over ? COLORS.berry : COLORS.ink, fontVariantNumeric: "tabular-nums" }}>
+          {Math.abs(left).toLocaleString("de-AT")}
+        </div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.muted, marginTop: 4 }}>
+          {over ? "kcal darüber" : "kcal übrig"}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MacroBar({ label, val, target, color, soft }) {
+  const pct = target > 0 ? Math.min(1, val / target) : 0;
+  return (
+    <div style={{ flex: 1 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 600, marginBottom: 5 }}>
+        <span style={{ color: COLORS.ink }}>{label}</span>
+        <span style={{ color: COLORS.muted, fontVariantNumeric: "tabular-nums" }}>{r(val)}/{target} g</span>
+      </div>
+      <div style={{ height: 8, borderRadius: 99, background: soft, overflow: "hidden" }}>
+        <div style={{ height: "100%", width: `${pct * 100}%`, background: color, borderRadius: 99, transition: "width .5s ease" }} />
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Onboarding ---------------- */
+
+function Onboarding({ onDone }) {
+  const [p, setP] = useState({ sex: "m", age: "", height: "", weight: "", activity: "1.55", goal: "keep" });
+  const ready = p.age && p.height && p.weight;
+  const set = (k) => (e) => setP({ ...p, [k]: e.target.value });
+
+  return (
+    <div style={{ padding: "28px 20px 40px", maxWidth: 460, margin: "0 auto" }}>
+      <div className="display" style={{ fontSize: 40, color: COLORS.green, lineHeight: 1.05 }}>Teller</div>
+      <p style={{ color: COLORS.muted, fontSize: 15, margin: "10px 0 26px", lineHeight: 1.5 }}>
+        Dein Essens-Tracker. Ein paar Angaben, dann berechne ich deinen Tagesbedarf — anpassen kannst du alles später jederzeit.
+      </p>
+      <div style={{ display: "grid", gap: 18 }}>
+        <Field label="Geschlecht">
+          <Seg options={[{ id: "m", label: "Männlich" }, { id: "f", label: "Weiblich" }]} value={p.sex} onChange={(v) => setP({ ...p, sex: v })} />
+        </Field>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+          <Field label="Alter"><input type="number" inputMode="numeric" style={inputStyle} value={p.age} onChange={set("age")} placeholder="28" /></Field>
+          <Field label="Größe" suffix="cm"><input type="number" inputMode="numeric" style={inputStyle} value={p.height} onChange={set("height")} placeholder="180" /></Field>
+          <Field label="Gewicht" suffix="kg"><input type="number" inputMode="decimal" style={inputStyle} value={p.weight} onChange={set("weight")} placeholder="78" /></Field>
+        </div>
+        <Field label="Aktivitätslevel">
+          <select style={{ ...inputStyle, appearance: "none" }} value={p.activity} onChange={set("activity")}>
+            {ACTIVITIES.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+          </select>
+        </Field>
+        <Field label="Ziel">
+          <Seg options={GOALS} value={p.goal} onChange={(v) => setP({ ...p, goal: v })} />
+        </Field>
+        {ready && (
+          <div style={{ background: COLORS.greenSoft, borderRadius: 14, padding: "14px 16px", fontSize: 14, color: COLORS.ink }}>
+            Dein Tagesziel: <strong className="display" style={{ fontSize: 18 }}>{calcTargets(p).kcal.toLocaleString("de-AT")} kcal</strong>
+            {" · "}{calcTargets(p).protein} g Protein · {calcTargets(p).carbs} g Kohlenhydrate · {calcTargets(p).fat} g Fett
+          </div>
+        )}
+        <button disabled={!ready} onClick={() => onDone({ ...p, targets: calcTargets(p), custom: false })}
+          style={{
+            minHeight: 54, border: "none", borderRadius: 14, fontSize: 16, fontWeight: 700, fontFamily: "inherit",
+            background: ready ? COLORS.green : COLORS.line, color: ready ? "#fff" : COLORS.muted,
+            cursor: ready ? "pointer" : "default",
+          }}>
+          Los geht's
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Ergebnis-Editor (nach KI-Analyse / manuell) ---------------- */
+
+function ResultEditor({ draft, setDraft, mealId, onConfirm, onBack }) {
+  const set = (k) => (e) => setDraft({ ...draft, [k]: e.target.value });
+  const meal = MEALS.find((m) => m.id === mealId);
+  return (
+    <div style={{ display: "grid", gap: 14 }}>
+      {draft.note && (
+        <div style={{ background: COLORS.amberSoft, borderRadius: 12, padding: "10px 14px", fontSize: 13, color: "#7A5416", lineHeight: 1.45 }}>
+          {draft.portion ? `≈ ${draft.portion} · ` : ""}{draft.note}
+        </div>
+      )}
+      <Field label="Bezeichnung"><input style={inputStyle} value={draft.name} onChange={set("name")} /></Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field label="Kalorien" suffix="kcal"><input type="number" inputMode="numeric" style={inputStyle} value={draft.kcal} onChange={set("kcal")} /></Field>
+        <Field label="Protein" suffix="g"><input type="number" inputMode="numeric" style={inputStyle} value={draft.protein} onChange={set("protein")} /></Field>
+        <Field label="Kohlenhydrate" suffix="g"><input type="number" inputMode="numeric" style={inputStyle} value={draft.carbs} onChange={set("carbs")} /></Field>
+        <Field label="Fett" suffix="g"><input type="number" inputMode="numeric" style={inputStyle} value={draft.fat} onChange={set("fat")} /></Field>
+      </div>
+      <button onClick={() => setDraft({ ...draft, _save: !draft._save })}
+        style={{ display: "flex", alignItems: "center", justifyContent: "space-between", minHeight: 48, padding: "0 14px", borderRadius: 12, border: `1.5px solid ${draft._save ? COLORS.green : COLORS.line}`, background: draft._save ? COLORS.greenSoft : "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14, fontWeight: 600, color: COLORS.ink, width: "100%" }}>
+        <span>⭐ Als eigenes Gericht merken</span>
+        <span aria-hidden="true" style={{ width: 40, height: 24, borderRadius: 99, background: draft._save ? COLORS.green : COLORS.line, position: "relative", flexShrink: 0, transition: "background .15s" }}>
+          <span style={{ position: "absolute", top: 3, left: draft._save ? 19 : 3, width: 18, height: 18, borderRadius: 99, background: "#fff", transition: "left .15s" }} />
+        </span>
+      </button>
+      <button onClick={onConfirm} style={{ minHeight: 52, border: "none", borderRadius: 14, background: COLORS.green, color: "#fff", fontSize: 16, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
+        Zu {meal?.label} hinzufügen
+      </button>
+      <button onClick={onBack} style={{ minHeight: 44, border: "none", borderRadius: 12, background: "transparent", color: COLORS.muted, fontSize: 14, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>
+        Zurück
+      </button>
+    </div>
+  );
+}
+
+/* ---------------- Add-Sheet ---------------- */
+
+function AddSheet({ mealId, onAdd, onClose }) {
+  const [tab, setTab] = useState("photo");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [draft, setDraft] = useState(null);
+  const [desc, setDesc] = useState("");
+  const [hint, setHint] = useState("");
+  const [preview, setPreview] = useState(null);
+  const fileRef = useRef(null);
+  const gFileRef = useRef(null);
+  const [gNr, setGNr] = useState("");
+  const [gdb, setGdb] = useState({});
+  const [odb, setOdb] = useState({});
+  const meal = MEALS.find((m) => m.id === mealId);
+
+  useEffect(() => {
+    (async () => {
+      setGdb(await loadJSON("gourmet-menues", {}));
+      setOdb(await loadJSON("meine-gerichte", {}));
+    })();
+  }, []);
+
+  async function analyzePhoto(file) {
+    setBusy(true); setErr("");
+    try {
+      const { base64, preview } = await fileToCompressedBase64(file);
+      setPreview(preview);
+      const result = await callClaude([
+        { type: "image", source: { type: "base64", media_type: "image/jpeg", data: base64 } },
+        { type: "text", text: `Du bist Ernährungsexperte. Analysiere das Foto dieser Mahlzeit und schätze Portionsgröße und Nährwerte so genau wie möglich.${hint ? ` Zusatzinfo des Nutzers: ${hint}.` : ""} ${JSON_RULES}` },
+      ]);
+      setDraft(result);
+    } catch (e) {
+      setErr("Analyse fehlgeschlagen — bitte nochmal versuchen. (" + e.message + ")");
+    } finally { setBusy(false); }
+  }
+
+  async function analyzeText() {
+    if (!desc.trim()) return;
+    setBusy(true); setErr("");
+    try {
+      const result = await callClaude([
+        { type: "text", text: `Du bist Ernährungsexperte. Der Nutzer beschreibt, was er gegessen hat: "${desc}". Schätze die Nährwerte realistisch. ${JSON_RULES}` },
+      ]);
+      setDraft(result);
+    } catch (e) {
+      setErr("Analyse fehlgeschlagen — bitte nochmal versuchen. (" + e.message + ")");
+    } finally { setBusy(false); }
+  }
+
+  async function lookupGourmet() {
+    const q = gNr.trim();
+    if (!q) return;
+    const qn = normNr(q);
+    // 1) Persönlich gespeicherte Menüs haben Vorrang (z. B. per Scan aktualisierte Werte)
+    const own = await loadJSON("gourmet-menues", {});
+    const ownKey = qn.length >= 3 ? Object.keys(own).find((k) => k === qn || k.endsWith(qn)) : null;
+    if (ownKey) {
+      setDraft({ ...own[ownKey], portion: "1 Portion", note: `GOURMET Nr. ${fmtNr(ownKey)} — aus deiner gespeicherten Liste.`, _gnr: ownKey });
+      return;
+    }
+    // 2) Eingebaute Sortimentsliste: Nummer (exakt oder Endung), sonst Gerichtsname
+    if (qn.length >= 3) {
+      const hits = Object.keys(GOURMET_DB).filter((nr) => nr === qn || nr.endsWith(qn));
+      if (hits.length === 1) { setDraft(gourmetDraft(hits[0], GOURMET_DB[hits[0]], "aus der Sortimentsliste (HW 2021/22).")); return; }
+      if (hits.length > 1) { setErr(`„${q}" passt auf mehrere Artikel — bitte vollständige Nummer eingeben oder unten den Treffer antippen.`); return; }
+    } else if (q.length >= 3) {
+      const nHits = Object.entries(GOURMET_DB).filter(([, d]) => d[0].toLowerCase().includes(q.toLowerCase()));
+      if (nHits.length === 1) { setDraft(gourmetDraft(nHits[0][0], nHits[0][1], "aus der Sortimentsliste (HW 2021/22).")); return; }
+      if (nHits.length > 1) { setErr(`Mehrere Treffer für „${q}" — tipp unten in der Liste das richtige Gericht an.`); return; }
+    }
+    // 3) Online-Suche für neue Nummern oder Gerichte, die nicht in der Liste sind
+    setBusy(true); setErr("");
+    try {
+      const result = await callClaude([
+        { type: "text", text: `Finde per Websuche die Nährwerte des GOURMET-Fertigmenüs „${q}" (GMS GOURMET GmbH, österreichische Betriebsverpflegung; Tiefkühl-Menüs für Firmen; Webshops: bestellung.gourmet.at, lieblingsspeisen.gourmet.at, gourmet-business.at). „${q}" ist die Artikelnummer oder die Bezeichnung. Gib die Werte für EINE ganze Portion (ein komplettes Menü-Tray) an, nicht pro 100 g. WICHTIG: Wenn du das Menü nicht eindeutig findest, rate NICHT irgendein Gericht, sondern antworte exakt mit {"error":"Menü nicht gefunden"}. ${JSON_RULES}` },
+      ], true);
+      setDraft({ ...result, _gnr: qn || normNr(result.nr) });
+    } catch (e) {
+      setErr(`„${q}" ist weder in der eingebauten Liste noch online eindeutig zu finden. Tipp: Packungsrückseite scannen oder Werte manuell eintragen — die App merkt sie sich dann unter der Nummer.`);
+    } finally { setBusy(false); }
+  }
+
+  async function analyzePackage(file) {
+    setBusy(true); setErr("");
+    try {
+      const { base64, preview } = await fileToCompressedBase64(file);
+      setPreview(preview);
+      const result = await callClaude([
+        { type: "image", source: { type: "base64", media_type: "image/jpeg", data: base64 } },
+        { type: "text", text: `Auf dem Foto ist die Verpackung eines GOURMET-Fertigmenüs (österreichische Betriebsverpflegung). Lies Produktname und Nährwerttabelle ab. Sind die Nährwerte pro 100 g angegeben, rechne sie anhand des Füllgewichts auf die GESAMTE Portion hoch. Falls eine Artikelnummer lesbar ist, gib sie im JSON zusätzlich als Feld "nr" (String) aus, sonst "nr":"". ${JSON_RULES}` },
+      ]);
+      setDraft({ ...result, _gnr: gNr.trim() || result.nr || "" });
+    } catch (e) {
+      setErr("Analyse fehlgeschlagen — bitte nochmal versuchen. (" + e.message + ")");
+    } finally { setBusy(false); }
+  }
+
+  async function removeGourmet(nr) {
+    const db = await loadJSON("gourmet-menues", {});
+    delete db[nr];
+    await saveJSON("gourmet-menues", db);
+    setGdb(db);
+  }
+
+  async function removeOwn(id) {
+    const own = await loadJSON("meine-gerichte", {});
+    delete own[id];
+    await saveJSON("meine-gerichte", own);
+    setOdb(own);
+  }
+
+  const gq = gNr.trim();
+  const gqn = normNr(gq);
+  const gHits = gq.length >= 2
+    ? Object.entries(GOURMET_DB).filter(([nr, d]) =>
+        (gqn.length >= 3 && (nr === gqn || nr.endsWith(gqn))) ||
+        (gq.length >= 3 && d[0].toLowerCase().includes(gq.toLowerCase()))
+      ).slice(0, 8)
+    : [];
+
+  const tabs = [
+    { id: "photo", label: "📷 Foto" },
+    { id: "text", label: "✏️ Text" },
+    { id: "gourmet", label: "🍽️ Gourmet" },
+    { id: "manual", label: "⭐ Meine" },
+  ];
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(28,43,36,.45)", display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()}
+        style={{ background: COLORS.bg, width: "100%", maxWidth: 520, maxHeight: "92vh", overflowY: "auto", borderRadius: "22px 22px 0 0", padding: "18px 20px 34px", boxSizing: "border-box" }}>
+        <div style={{ width: 40, height: 4, borderRadius: 99, background: COLORS.line, margin: "0 auto 14px" }} />
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14 }}>
+          <div className="display" style={{ fontSize: 24, color: COLORS.ink }}>{meal?.emoji} {meal?.label}</div>
+          <button onClick={onClose} style={{ border: "none", background: "transparent", color: COLORS.muted, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Schließen</button>
+        </div>
+
+        {draft ? (
+          <ResultEditor draft={draft} setDraft={setDraft} mealId={mealId}
+            onConfirm={async () => {
+              const entry = { name: draft.name, kcal: r(draft.kcal), protein: r(draft.protein), carbs: r(draft.carbs), fat: r(draft.fat), id: Date.now() + "-" + Math.random().toString(36).slice(2, 7) };
+              const nr = normNr(draft._gnr);
+              if (nr) {
+                const db = await loadJSON("gourmet-menues", {});
+                db[nr] = { name: entry.name, kcal: entry.kcal, protein: entry.protein, carbs: entry.carbs, fat: entry.fat };
+                await saveJSON("gourmet-menues", db);
+              }
+              if (draft._save) {
+                const own = await loadJSON("meine-gerichte", {});
+                const oid = draft._ownId || "g" + Date.now().toString(36);
+                own[oid] = { name: entry.name, kcal: entry.kcal, protein: entry.protein, carbs: entry.carbs, fat: entry.fat, used: Date.now() };
+                await saveJSON("meine-gerichte", own);
+              } else if (draft._ownId) {
+                const own = await loadJSON("meine-gerichte", {});
+                if (own[draft._ownId]) { own[draft._ownId].used = Date.now(); await saveJSON("meine-gerichte", own); }
+              }
+              onAdd(mealId, entry);
+              onClose();
+            }}
+            onBack={() => { setDraft(null); setPreview(null); setTab("photo"); }} />
+        ) : (
+          <>
+            <Seg options={tabs} value={tab} onChange={(t) => { setTab(t); setErr(""); }} />
+            <div style={{ marginTop: 16, display: "grid", gap: 14 }}>
+              {err && <div style={{ background: COLORS.berrySoft, color: COLORS.berry, borderRadius: 12, padding: "10px 14px", fontSize: 13, lineHeight: 1.45 }}>{err}</div>}
+
+              {busy ? (
+                <div style={{ textAlign: "center", padding: "34px 0" }}>
+                  {preview && <img src={preview} alt="" style={{ width: 110, height: 110, objectFit: "cover", borderRadius: 16, marginBottom: 14 }} />}
+                  <div className="pulse display" style={{ fontSize: 19, color: COLORS.green }}>Claude analysiert dein Essen …</div>
+                  <div style={{ fontSize: 13, color: COLORS.muted, marginTop: 6 }}>dauert ein paar Sekunden</div>
+                </div>
+              ) : (
+                <>
+                  {tab === "photo" && (
+                    <>
+                      {!getApiKey() && <KeyHint />}
+                      <Field label="Optionaler Hinweis für die KI">
+                        <input style={inputStyle} value={hint} onChange={(e) => setHint(e.target.value)} placeholder="z. B. große Portion, mit Öl gebraten" />
+                      </Field>
+                      <button onClick={() => fileRef.current?.click()}
+                        style={{ minHeight: 120, border: `2px dashed ${COLORS.green}`, borderRadius: 16, background: COLORS.greenSoft, color: COLORS.green, fontSize: 16, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
+                        📷 Foto aufnehmen oder auswählen
+                      </button>
+                      <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }}
+                        onChange={(e) => { const f = e.target.files?.[0]; if (f) analyzePhoto(f); e.target.value = ""; }} />
+                      <p style={{ fontSize: 12.5, color: COLORS.muted, lineHeight: 1.5, margin: 0 }}>
+                        Die Werte aus Fotos sind KI-Schätzungen (±20–30 %). Für exaktes Tracking kannst du sie danach anpassen.
+                      </p>
+                    </>
+                  )}
+
+                  {tab === "text" && (
+                    <>
+                      {!getApiKey() && <KeyHint />}
+                      <Field label="Was hast du gegessen?">
+                        <textarea rows={3} style={{ ...inputStyle, resize: "vertical" }} value={desc} onChange={(e) => setDesc(e.target.value)}
+                          placeholder="z. B. 200 g Hähnchenbrust mit 150 g Reis und Brokkoli" />
+                      </Field>
+                      <button onClick={analyzeText} disabled={!desc.trim()}
+                        style={{ minHeight: 52, border: "none", borderRadius: 14, background: desc.trim() ? COLORS.green : COLORS.line, color: desc.trim() ? "#fff" : COLORS.muted, fontSize: 16, fontWeight: 700, fontFamily: "inherit", cursor: desc.trim() ? "pointer" : "default" }}>
+                        Nährwerte schätzen
+                      </button>
+                    </>
+                  )}
+
+                  {tab === "gourmet" && (
+                    <>
+                      <Field label="Artikelnummer oder Gerichtsname">
+                        <input style={inputStyle} value={gNr} onChange={(e) => setGNr(e.target.value)} placeholder="z. B. 230 1148 oder Gulasch" />
+                      </Field>
+                      {gHits.length > 0 && (
+                        <div style={{ display: "grid", gap: 6 }}>
+                          {gHits.map(([nr, d]) => (
+                            <button key={nr} onClick={() => setDraft(gourmetDraft(nr, d, "aus der Sortimentsliste (HW 2021/22)."))}
+                              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, background: COLORS.card, borderRadius: 12, padding: "10px 12px", border: `1px solid ${COLORS.line}`, cursor: "pointer", fontFamily: "inherit", fontSize: 13, color: COLORS.ink, textAlign: "left", width: "100%" }}>
+                              <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><strong>{fmtNr(nr)}</strong> · {d[0]}</span>
+                              <span style={{ color: COLORS.muted, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{d[1]} kcal</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        <button onClick={lookupGourmet} disabled={!gNr.trim()}
+                          style={{ minHeight: 50, border: "none", borderRadius: 14, background: gNr.trim() ? COLORS.green : COLORS.line, color: gNr.trim() ? "#fff" : COLORS.muted, fontSize: 14.5, fontWeight: 700, fontFamily: "inherit", cursor: gNr.trim() ? "pointer" : "default" }}>
+                          Werte holen
+                        </button>
+                        <button onClick={() => gFileRef.current?.click()}
+                          style={{ minHeight: 50, border: `1.5px solid ${COLORS.green}`, borderRadius: 14, background: "transparent", color: COLORS.green, fontSize: 14.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
+                          📷 Packung scannen
+                        </button>
+                      </div>
+                      <input ref={gFileRef} type="file" accept="image/*" style={{ display: "none" }}
+                        onChange={(e) => { const f = e.target.files?.[0]; if (f) analyzePackage(f); e.target.value = ""; }} />
+                      {Object.keys(gdb).length > 0 && (
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: ".05em", margin: "2px 0 8px" }}>Gespeicherte Menüs</div>
+                          <div style={{ display: "grid", gap: 6 }}>
+                            {Object.entries(gdb).sort((a, b) => a[0].localeCompare(b[0], "de", { numeric: true })).map(([nr, m]) => (
+                              <div key={nr} style={{ display: "flex", alignItems: "center", gap: 8, background: COLORS.card, borderRadius: 12, padding: "10px 12px", border: `1px solid ${COLORS.line}` }}>
+                                <button onClick={() => setDraft({ ...m, portion: "1 Portion", note: `GOURMET Nr. ${fmtNr(nr)} — aus deiner gespeicherten Liste.`, _gnr: nr })}
+                                  style={{ flex: 1, minWidth: 0, border: "none", background: "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", fontSize: 13.5, color: COLORS.ink, padding: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  <strong>Nr. {fmtNr(nr)}</strong> · {m.name} <span style={{ color: COLORS.muted }}>· {m.kcal} kcal</span>
+                                </button>
+                                <button aria-label={`Nr. ${nr} aus Liste löschen`} onClick={() => removeGourmet(nr)}
+                                  style={{ border: "none", background: "transparent", color: COLORS.muted, cursor: "pointer", fontSize: 14, padding: "2px 4px", flexShrink: 0 }}>
+                                  ✕
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      <p style={{ fontSize: 12.5, color: COLORS.muted, lineHeight: 1.5, margin: 0 }}>
+                        Die komplette Sortimentsliste (À la Carte HW 2021/22, über 260 Gerichte) ist eingebaut — Nummer oder Namen tippen genügt. Nicht dabei (neueres Sortiment)? Dann sucht Claude online, oder du scannst einmal die Packung — bestätigte Einträge merkt sich die App.
+                      </p>
+                    </>
+                  )}
+
+                  {tab === "manual" && (
+                    <>
+                      <button onClick={() => setDraft({ name: "", kcal: "", protein: "", carbs: "", fat: "", note: "", portion: "", _save: true })}
+                        style={{ minHeight: 54, border: `2px dashed ${COLORS.green}`, borderRadius: 14, background: COLORS.greenSoft, color: COLORS.green, fontSize: 15, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
+                        + Neues Gericht anlegen
+                      </button>
+                      {Object.keys(odb).length > 0 ? (
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: ".05em", margin: "2px 0 8px" }}>Meine Gerichte</div>
+                          <div style={{ display: "grid", gap: 6 }}>
+                            {Object.entries(odb).sort((a, b) => (b[1].used || 0) - (a[1].used || 0)).map(([id, m]) => (
+                              <div key={id} style={{ display: "flex", alignItems: "center", gap: 8, background: COLORS.card, borderRadius: 12, padding: "10px 12px", border: `1px solid ${COLORS.line}` }}>
+                                <button onClick={() => setDraft({ name: m.name, kcal: m.kcal, protein: m.protein, carbs: m.carbs, fat: m.fat, note: "Aus deinen gespeicherten Gerichten.", portion: "", _ownId: id })}
+                                  style={{ flex: 1, minWidth: 0, border: "none", background: "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", fontSize: 13.5, color: COLORS.ink, padding: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  <strong>{m.name}</strong> <span style={{ color: COLORS.muted, fontVariantNumeric: "tabular-nums" }}>· {m.kcal} kcal · {r(m.protein)}P {r(m.carbs)}K {r(m.fat)}F</span>
+                                </button>
+                                <button aria-label={`${m.name} aus Liste löschen`} onClick={() => removeOwn(id)}
+                                  style={{ border: "none", background: "transparent", color: COLORS.muted, cursor: "pointer", fontSize: 14, padding: "2px 4px", flexShrink: 0 }}>
+                                  ✕
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <p style={{ fontSize: 13, color: COLORS.muted, lineHeight: 1.5, margin: 0, textAlign: "center", padding: "10px 0" }}>
+                          Noch keine eigenen Gerichte gespeichert.
+                        </p>
+                      )}
+                      <p style={{ fontSize: 12.5, color: COLORS.muted, lineHeight: 1.5, margin: 0 }}>
+                        Zuletzt gegessene Gerichte stehen oben — perfekt für Meal-Prep-Wochen. Tipp: Auch Foto-, Text- und Gourmet-Einträge kannst du vor dem Hinzufügen mit „merken" hier speichern.
+                      </p>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Einstellungen ---------------- */
+
+function Settings({ profile, onSave, onClose }) {
+  const [p, setP] = useState({ ...profile });
+  const [t, setT] = useState({ ...profile.targets });
+  const [apiKey, setApiKey] = useState(getApiKey());
+  const set = (k) => (e) => setP({ ...p, [k]: e.target.value });
+  const setTarget = (k) => (e) => setT({ ...t, [k]: e.target.value });
+  const recalced = calcTargets(p);
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 50, background: COLORS.bg, overflowY: "auto" }}>
+      <div style={{ maxWidth: 460, margin: "0 auto", padding: "24px 20px 44px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 20 }}>
+          <div className="display" style={{ fontSize: 28, color: COLORS.ink }}>Profil & Ziele</div>
+          <button onClick={onClose} style={{ border: "none", background: "transparent", color: COLORS.muted, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Abbrechen</button>
+        </div>
+        <div style={{ display: "grid", gap: 16 }}>
+          <Seg options={[{ id: "m", label: "Männlich" }, { id: "f", label: "Weiblich" }]} value={p.sex} onChange={(v) => setP({ ...p, sex: v })} />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+            <Field label="Alter"><input type="number" style={inputStyle} value={p.age} onChange={set("age")} /></Field>
+            <Field label="Größe" suffix="cm"><input type="number" style={inputStyle} value={p.height} onChange={set("height")} /></Field>
+            <Field label="Gewicht" suffix="kg"><input type="number" style={inputStyle} value={p.weight} onChange={set("weight")} /></Field>
+          </div>
+          <Field label="Aktivitätslevel">
+            <select style={{ ...inputStyle, appearance: "none" }} value={p.activity} onChange={set("activity")}>
+              {ACTIVITIES.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+            </select>
+          </Field>
+          <Field label="Ziel"><Seg options={GOALS} value={p.goal} onChange={(v) => setP({ ...p, goal: v })} /></Field>
+
+          <button onClick={() => setT(recalced)}
+            style={{ minHeight: 46, border: `1.5px solid ${COLORS.green}`, borderRadius: 12, background: "transparent", color: COLORS.green, fontSize: 14, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
+            Ziele neu berechnen → {recalced.kcal.toLocaleString("de-AT")} kcal
+          </button>
+
+          <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.muted, marginTop: 6, textTransform: "uppercase", letterSpacing: ".05em" }}>Tagesziele (manuell anpassbar)</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <Field label="Kalorien" suffix="kcal"><input type="number" style={inputStyle} value={t.kcal} onChange={setTarget("kcal")} /></Field>
+            <Field label="Protein" suffix="g"><input type="number" style={inputStyle} value={t.protein} onChange={setTarget("protein")} /></Field>
+            <Field label="Kohlenhydrate" suffix="g"><input type="number" style={inputStyle} value={t.carbs} onChange={setTarget("carbs")} /></Field>
+            <Field label="Fett" suffix="g"><input type="number" style={inputStyle} value={t.fat} onChange={setTarget("fat")} /></Field>
+          </div>
+
+          <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.muted, marginTop: 6, textTransform: "uppercase", letterSpacing: ".05em" }}>KI-Analyse (optional)</div>
+          <Field label="Anthropic API-Key">
+            <input type="password" autoComplete="off" style={inputStyle} value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-ant-..." />
+          </Field>
+          <p style={{ fontSize: 12.5, color: COLORS.muted, lineHeight: 1.5, margin: "-6px 0 0" }}>
+            Der Key wird nur lokal auf diesem Gerät gespeichert und direkt an die Anthropic-API geschickt — nirgendwo sonst hin. Er ermöglicht Foto-/Text-Analyse und die Gourmet-Onlinesuche. Ohne Key funktionieren Sortimentsliste, Meine Gerichte und manuelle Einträge trotzdem voll.
+          </p>
+
+          <button onClick={() => { setApiKeyLS(apiKey); onSave({ ...p, targets: { kcal: r(t.kcal), protein: r(t.protein), carbs: r(t.carbs), fat: r(t.fat) } }); }}
+            style={{ minHeight: 54, border: "none", borderRadius: 14, background: COLORS.green, color: "#fff", fontSize: 16, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
+            Speichern
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Haupt-App ---------------- */
+
+function TellerApp() {
+  const [loading, setLoading] = useState(true);
+  const [profile, setProfile] = useState(null);
+  const [date, setDate] = useState(new Date());
+  const [day, setDay] = useState(emptyDay());
+  const [sheet, setSheet] = useState(null); // mealId | null
+  const [showSettings, setShowSettings] = useState(false);
+  const key = dateKey(date);
+
+  useEffect(() => {
+    (async () => {
+      const p = await loadJSON("profile", null);
+      setProfile(p);
+      setLoading(false);
+    })();
+  }, []);
+
+  useEffect(() => {
+    (async () => setDay(await loadJSON("day:" + key, emptyDay())))();
+  }, [key]);
+
+  async function addEntry(mealId, entry) {
+    const next = { ...day, meals: { ...day.meals, [mealId]: [...(day.meals[mealId] || []), entry] } };
+    setDay(next);
+    await saveJSON("day:" + key, next);
+  }
+  async function removeEntry(mealId, id) {
+    const next = { ...day, meals: { ...day.meals, [mealId]: (day.meals[mealId] || []).filter((e) => e.id !== id) } };
+    setDay(next);
+    await saveJSON("day:" + key, next);
+  }
+  async function saveProfile(p) {
+    setProfile(p);
+    await saveJSON("profile", p);
+    setShowSettings(false);
+  }
+
+  const shell = (children) => (
+    <div style={{ minHeight: "100vh", background: COLORS.bg, color: COLORS.ink, fontFamily: "'Instrument Sans', system-ui, sans-serif" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Instrument+Sans:wght@400;600;700&display=swap');
+        .display { font-family: 'Fraunces', Georgia, serif; font-weight: 600; }
+        .pulse { animation: pulse 1.4s ease-in-out infinite; }
+        @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .45 } }
+        button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2.5px solid ${COLORS.amber}; outline-offset: 2px; }
+        input:focus, select:focus, textarea:focus { border-color: ${COLORS.green}; }
+        @media (prefers-reduced-motion: reduce) { *, .pulse { animation: none !important; transition: none !important; } }
+      `}</style>
+      {children}
+    </div>
+  );
+
+  if (loading) return shell(<div className="pulse display" style={{ textAlign: "center", paddingTop: 120, fontSize: 22, color: COLORS.green }}>Teller lädt …</div>);
+  if (!profile) return shell(<Onboarding onDone={saveProfile} />);
+
+  const targets = profile.targets;
+  const all = MEALS.flatMap((m) => day.meals[m.id] || []);
+  const sum = (k) => all.reduce((a, e) => a + (Number(e[k]) || 0), 0);
+  const eaten = sum("kcal");
+
+  return shell(
+    <div style={{ maxWidth: 460, margin: "0 auto", padding: "18px 18px 60px" }}>
+      {/* Kopf: Datum + Einstellungen */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
+        <button aria-label="Vorheriger Tag" onClick={() => setDate(new Date(date.getTime() - 86400000))} style={navBtn}>‹</button>
+        <div style={{ textAlign: "center" }}>
+          <div className="display" style={{ fontSize: 19 }}>{labelForDate(date)}</div>
+          {dateKey(date) !== dateKey(new Date()) && (
+            <button onClick={() => setDate(new Date())} style={{ border: "none", background: "transparent", color: COLORS.green, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", padding: 2 }}>
+              zu heute springen
+            </button>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button aria-label="Nächster Tag" onClick={() => setDate(new Date(date.getTime() + 86400000))} style={navBtn}>›</button>
+          <button aria-label="Einstellungen" onClick={() => setShowSettings(true)} style={navBtn}>⚙</button>
+        </div>
+      </div>
+
+      {/* Ring */}
+      <div style={{ background: COLORS.card, borderRadius: 22, padding: "26px 20px 22px", boxShadow: "0 1px 3px rgba(28,43,36,.06)" }}>
+        <Ring eaten={eaten} target={targets.kcal} />
+        <div style={{ display: "flex", justifyContent: "center", gap: 26, marginTop: 16, fontSize: 13.5, color: COLORS.muted, fontVariantNumeric: "tabular-nums" }}>
+          <span><strong style={{ color: COLORS.ink }}>{eaten.toLocaleString("de-AT")}</strong> gegessen</span>
+          <span>Ziel <strong style={{ color: COLORS.ink }}>{targets.kcal.toLocaleString("de-AT")}</strong></span>
+        </div>
+        <div style={{ display: "flex", gap: 14, marginTop: 20 }}>
+          <MacroBar label="Protein" val={sum("protein")} target={targets.protein} color={COLORS.green} soft={COLORS.greenSoft} />
+          <MacroBar label="Kohlenh." val={sum("carbs")} target={targets.carbs} color={COLORS.amber} soft={COLORS.amberSoft} />
+          <MacroBar label="Fett" val={sum("fat")} target={targets.fat} color={COLORS.berry} soft={COLORS.berrySoft} />
+        </div>
+      </div>
+
+      {/* Mahlzeiten */}
+      <div style={{ display: "grid", gap: 12, marginTop: 16 }}>
+        {MEALS.map((m) => {
+          const entries = day.meals[m.id] || [];
+          const mealKcal = entries.reduce((a, e) => a + (Number(e.kcal) || 0), 0);
+          const budget = Math.round(targets.kcal * m.share);
+          return (
+            <div key={m.id} style={{ background: COLORS.card, borderRadius: 18, padding: "14px 16px", boxShadow: "0 1px 3px rgba(28,43,36,.05)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontSize: 15.5, fontWeight: 700 }}>{m.emoji} {m.label}</div>
+                  <div style={{ fontSize: 12.5, color: mealKcal > budget ? COLORS.berry : COLORS.muted, fontVariantNumeric: "tabular-nums", marginTop: 2 }}>
+                    {mealKcal.toLocaleString("de-AT")} / {budget.toLocaleString("de-AT")} kcal empfohlen
+                  </div>
+                </div>
+                <button aria-label={`${m.label}: Essen hinzufügen`} onClick={() => setSheet(m.id)}
+                  style={{ width: 42, height: 42, borderRadius: 99, border: "none", background: COLORS.green, color: "#fff", fontSize: 22, lineHeight: 1, cursor: "pointer", flexShrink: 0 }}>
+                  +
+                </button>
+              </div>
+              {entries.length > 0 && (
+                <div style={{ marginTop: 10, borderTop: `1px solid ${COLORS.line}`, paddingTop: 8, display: "grid", gap: 6 }}>
+                  {entries.map((e) => (
+                    <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5 }}>
+                      <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.name}</span>
+                      <span style={{ color: COLORS.muted, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
+                        {r(e.kcal)} kcal · {r(e.protein)}P {r(e.carbs)}K {r(e.fat)}F
+                      </span>
+                      <button aria-label={`${e.name} entfernen`} onClick={() => removeEntry(m.id, e.id)}
+                        style={{ border: "none", background: "transparent", color: COLORS.muted, fontSize: 15, cursor: "pointer", padding: "2px 4px", flexShrink: 0 }}>
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <p style={{ textAlign: "center", fontSize: 12, color: COLORS.muted, marginTop: 22, lineHeight: 1.5 }}>
+        Foto- und Textwerte sind KI-Schätzungen — als Trend über Tage hinweg zuverlässig, im Einzelfall gerne nachjustieren.
+      </p>
+
+      {sheet && <AddSheet mealId={sheet} onAdd={addEntry} onClose={() => setSheet(null)} />}
+      {showSettings && <Settings profile={profile} onSave={saveProfile} onClose={() => setShowSettings(false)} />}
+    </div>
+  );
+}
+
+const navBtn = {
+  width: 40, height: 40, borderRadius: 12, border: `1.5px solid ${COLORS.line}`,
+  background: COLORS.card, color: COLORS.ink, fontSize: 18, cursor: "pointer",
+  display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit",
+};
+
+ReactDOM.createRoot(document.getElementById("root")).render(<TellerApp />);
+</script>
+</body>
+</html>
