@@ -346,11 +346,66 @@ const GOURMET_DB = {
   "96825": ["Sauce Tartare", 136, 0.2, 2.8, 13.6],
 };
 
+/* JUIT Speisekarte (juit.com/de/gerichte) — Nährwerte pro Portion / Menü.
+   Format: [Name, Beschreibung, kcal, Eiweiß g, Kohlenhydrate g, Fett g] */
+const JUIT_DB = [
+  ["Spaghetti alla Bologna", "mit Basilikum-Pesto", 666, 35, 78, 21],
+  ["Zitronenhähnchen mit geröstetem Brokkoli", "und Kartoffel-Erbsenstampf", 428, 38, 35, 13],
+  ["Hähnchen-Geschnetzeltes", "mit cremiger Champignonsauce", 505, 35, 50, 15],
+  ["Linguini Avocado-Limette", "mit Basilikum-Hähnchen", 906, 40, 74, 46],
+  ["Butter Chicken", "mit Cashew-Basmatireis", 650, 31, 60, 29],
+  ["Spaghetti mit Avocado-Pesto", "und Kirschtomaten", 1092, 31, 100, 58],
+  ["Hackbällchen à la Siziliana", "mit Pasta und Zucchini", 513, 32, 57, 13],
+  ["Köttbullar mit Preiselbeersosse", "und buntem Kartoffelstampf", 584, 28, 48, 28],
+  ["Peanut-Chicken", "mit Basmatireis", 590, 34, 48, 25],
+  ["Linguini con Pollo", "in cremiger Soße mit grünen Bohnen", 519, 41, 59, 10],
+  ["Rotes Kokoscurry", "mit Hähnchen und schwarzem Reis", 541, 39, 41, 22],
+  ["Chicken mit Pumpkin-Mash", "und cremigem Spinat", 396, 36, 23, 16],
+  ["Sweet & Spicy Mango Chicken", "mit schwarzem Reis", 545, 30, 61, 17],
+  ["Soba Bowl Erdnuss-Teriyaki", "mit Kichererbsen und Gemüse", 763, 29, 86, 28],
+  ["Beef-Chili", "mit Bohnen-Reis", 538, 28, 67, 14],
+  ["Tandoori Chicken", "mit Basmatireis", 486, 37, 45, 14],
+  ["Lachsfilet Sesam-Teriyaki", "mit Kartoffel-Wasabi-Stampf", 508, 31, 36, 24],
+  ["High Protein Pumpkin Pasta", "mit Hähnchen und Hirtenkäse", 754, 62, 62, 25],
+  ["Joghurt-Kräuter-Huhn", "mit gelbem Reis", 517, 31, 52, 20],
+  ["Rindergulasch mit gegrillter Paprika", "und Spätzle", 508, 39, 47, 16],
+  ["Waldpilz-Geschnetzeltes", "mit Champignons und zitronigem Reis", 657, 15, 64, 36],
+  ["Golden Protein Bowl", "mit Hähnchen und Süßkartoffel-Kürbis-Mash", 598, 43, 46, 24],
+  ["Pulled Chicken", "mit Paprika und Süßkartoffelstampf", 442, 26, 41, 17],
+  ["Cajun Chicken Louisiana", "mit Mais und Süßkartoffelstampf", 593, 34, 55, 23],
+  ["Pennette Feta", "mit rotem Pesto", 824, 30, 63, 45],
+  ["Caprese Chicken", "mit Spaghetti", 520, 39, 59, 9.9],
+  ["Schweinerücken-Steak in Champignon-Sauce", "mit Kartoffel-Brokkoli-Stampf", 564, 35, 31, 31],
+  ["Mac and Chicken", "mit Double-Cheese-Sauce und Mandeln", 838, 45, 69, 40],
+  ["Hähnchen-Curry mit Ananas XL", "und Kokos-Reis", 599, 28, 64, 23],
+  ["Spaghetti al Salmone XL", "verfeinert mit Zitronenschale", 689, 32, 77, 32],
+  ["Zitronenhähnchen XL", "mit Brokkoli und Kartoffel-Erbsenstampf", 582, 60, 38, 16],
+  ["Hähnchen-Geschnetzeltes XL", "mit cremiger Champignonsauce", 659, 48, 67, 17],
+  ["Mac and Cheese", "mit Triple-Cheese-Sauce und Mandeln", 902, 43, 69, 48],
+  ["Pink Pasta", "mit Feta", 886, 31, 89, 43],
+  ["Hähnchen-Spargel Pasta", "mit Frischkäse-Bärlauch-Sauce", 813, 40, 71, 37],
+  ["Rinderragout mit Karotten", "und Fusilli", 530, 33, 79, 5.8],
+  ["Frühlingspasta mit grünem Spargel", "in cremiger Bärlauchsoße", 700, 24, 75, 34],
+  ["Planted Chicken BBQ", "aus Erbse mit Kartoffel-Zwiebelstampf", 445, 22, 42, 18],
+  ["Planted Thai-Curry", "mit schwarzem Reis", 600, 24, 58, 27],
+  ["Getrüffelte Pasta", "mit Kräuterseitlingen", 738, 24, 79, 32],
+  ["Wagyu Meatballs Sesam-Teriyaki", "an Kartoffelpüree verfeinert mit Wasabi", 665, 32, 43, 38],
+  ["No Chicken Tikka Masala", "aus veganen Erbsenstreifen mit Mandel-Reis", 509, 26, 45, 22],
+  ["Gnocchi Gorgonzola-Parmigiano", "mit Baby-Spinat und Tomaten", 845, 23, 85, 44],
+  ["High Protein Bolognese", "2 x 500 g", 615, 46, 75, 11],
+  ["Chicken Tikka Masala", "mit Blumenkohl-Reis", 549, 34, 31, 31],
+  ["Pasta Tonno e Verdure", "mit Gremolata und nativem Olivenöl extra", 545, 44, 55, 14],
+];
+
 const normNr = (s) => String(s || "").replace(/\D/g, "");
 const fmtNr = (n) => (n.length > 4 ? n.slice(0, -4) + " " + n.slice(-4) : n);
 const gourmetDraft = (nr, d, src) => ({
   name: d[0], kcal: d[1], protein: d[2], carbs: d[3], fat: d[4],
   portion: "1 Portion", note: `GOURMET Art.Nr. ${fmtNr(nr)} — ${src}`, _gnr: nr,
+});
+const juitDraft = (d) => ({
+  name: d[0], kcal: d[2], protein: d[3], carbs: d[4], fat: d[5],
+  portion: "1 Portion", note: `Juit · ${d[1]}`,
 });
 
 /* ---------------- Utils ---------------- */
@@ -651,6 +706,7 @@ function AddSheet({ mealId, onAdd, onClose }) {
   const fileRef = useRef(null);
   const gFileRef = useRef(null);
   const [gNr, setGNr] = useState("");
+  const [jq, setJq] = useState("");
   const [gdb, setGdb] = useState({});
   const [odb, setOdb] = useState({});
   const meal = MEALS.find((m) => m.id === mealId);
@@ -761,11 +817,17 @@ function AddSheet({ mealId, onAdd, onClose }) {
       ).slice(0, 8)
     : [];
 
+  const jqt = jq.trim().toLowerCase();
+  const juitHits = jqt.length === 0
+    ? JUIT_DB
+    : JUIT_DB.filter((d) => d[0].toLowerCase().includes(jqt) || d[1].toLowerCase().includes(jqt));
+
   const tabs = [
-    { id: "photo", label: "📷 Foto" },
-    { id: "text", label: "✏️ Text" },
-    { id: "gourmet", label: "🍽️ Gourmet" },
-    { id: "manual", label: "⭐ Meine" },
+    { id: "photo", label: "Foto" },
+    { id: "text", label: "Text" },
+    { id: "gourmet", label: "Gourmet" },
+    { id: "juit", label: "Juit" },
+    { id: "manual", label: "Meine" },
   ];
 
   return (
@@ -900,6 +962,36 @@ function AddSheet({ mealId, onAdd, onClose }) {
                     </>
                   )}
 
+                  {tab === "juit" && (
+                    <>
+                      <Field label="Gericht suchen">
+                        <input style={inputStyle} value={jq} onChange={(e) => setJq(e.target.value)} placeholder="z. B. Butter Chicken oder Curry" />
+                      </Field>
+                      <div style={{ display: "grid", gap: 6, maxHeight: 340, overflowY: "auto", margin: "-2px -2px 0", padding: 2 }}>
+                        {juitHits.length > 0 ? juitHits.map((d, i) => (
+                          <button key={i} onClick={() => setDraft(juitDraft(d))}
+                            style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, background: COLORS.card, borderRadius: 12, padding: "10px 12px", border: `1px solid ${COLORS.line}`, cursor: "pointer", fontFamily: "inherit", color: COLORS.ink, textAlign: "left", width: "100%" }}>
+                            <span style={{ minWidth: 0, flex: 1 }}>
+                              <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 13.5, fontWeight: 600 }}>{d[0]}</span>
+                              <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12, color: COLORS.muted }}>{d[1]}</span>
+                            </span>
+                            <span style={{ textAlign: "right", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+                              <span style={{ display: "block", fontSize: 13.5, fontWeight: 700 }}>{d[2]} kcal</span>
+                              <span style={{ display: "block", fontSize: 11.5, color: COLORS.muted }}>{d[3]}P {d[4]}K {d[5]}F</span>
+                            </span>
+                          </button>
+                        )) : (
+                          <p style={{ fontSize: 13, color: COLORS.muted, textAlign: "center", padding: "10px 0", margin: 0 }}>
+                            Kein Juit-Gericht gefunden.
+                          </p>
+                        )}
+                      </div>
+                      <p style={{ fontSize: 12.5, color: COLORS.muted, lineHeight: 1.5, margin: 0 }}>
+                        Alle {JUIT_DB.length} Juit-Gerichte mit offiziellen Nährwerten sind eingebaut. Tipp das Gericht an, das du gegessen hast — die Werte kannst du danach anpassen (z. B. bei halber Portion) und mit „merken" zu deinen Gerichten hinzufügen.
+                      </p>
+                    </>
+                  )}
+
                   {tab === "manual" && (
                     <>
                       <button onClick={() => setDraft({ name: "", kcal: "", protein: "", carbs: "", fat: "", note: "", portion: "", _save: true })}
@@ -930,7 +1022,7 @@ function AddSheet({ mealId, onAdd, onClose }) {
                         </p>
                       )}
                       <p style={{ fontSize: 12.5, color: COLORS.muted, lineHeight: 1.5, margin: 0 }}>
-                        Zuletzt gegessene Gerichte stehen oben — perfekt für Meal-Prep-Wochen. Tipp: Auch Foto-, Text- und Gourmet-Einträge kannst du vor dem Hinzufügen mit „merken" hier speichern.
+                        Zuletzt gegessene Gerichte stehen oben — perfekt für Meal-Prep-Wochen. Tipp: Auch Foto-, Text-, Gourmet- und Juit-Einträge kannst du vor dem Hinzufügen mit „merken" hier speichern.
                       </p>
                     </>
                   )}
