@@ -11,6 +11,7 @@
 <meta name="theme-color" content="#EEF2EC" id="theme-color-meta">
 <link rel="apple-touch-icon" href="icon.png">
 <link rel="icon" type="image/png" href="icon.png">
+<link rel="manifest" href="manifest.webmanifest">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -25,6 +26,22 @@
       if (m) m.setAttribute("content", t === "dark" ? "#101613" : "#EEF2EC");
     } catch (e) {}
   })();
+</script>
+<!-- Service Worker: automatische Updates beim nächsten Öffnen -->
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", function () {
+      var hadController = !!navigator.serviceWorker.controller;
+      navigator.serviceWorker.register("sw.js").catch(function () {});
+      var refreshing = false;
+      navigator.serviceWorker.addEventListener("controllerchange", function () {
+        // Nur bei einem echten Update neu laden, nicht bei der Erstinstallation.
+        if (refreshing || !hadController) return;
+        refreshing = true;
+        location.reload();
+      });
+    });
+  }
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>

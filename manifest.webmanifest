@@ -1,0 +1,15 @@
+{
+  "name": "Teller",
+  "short_name": "Teller",
+  "description": "Persönlicher Essens und Kalorien Tracker",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#EEF2EC",
+  "theme_color": "#1E5B41",
+  "icons": [
+    { "src": "icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
