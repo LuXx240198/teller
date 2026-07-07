@@ -1,27 +1,23 @@
 /* Teller Service Worker
    Strategie: bei Verbindung immer die neuesten Dateien laden und im Cache
-   auffrischen; ohne Verbindung aus dem Cache liefern. Dadurch zeigt die App
-   nach einem Deployment beim nächsten Öffnen automatisch den aktuellen Stand.
+   auffrischen; ohne Verbindung aus dem Cache liefern. Nach einem Deployment
+   zeigt die App beim naechsten Oeffnen automatisch den aktuellen Stand.
 
-   Die Zahl in CACHE darfst du bei Bedarf erhöhen, um den Offlinecache hart zu
-   leeren. Nötig ist das für Updates aber nicht. */
+   Die App steckt komplett in der index.html, daher muss nur diese eine Datei
+   sicher im Cache liegen. Icon und Manifest werden nur bestmoeglich ergaenzt. */
 
-const CACHE = "teller-v1";
-const ASSETS = [
-  "./",
-  "./index.html",
-  "./icon.png",
-  "./manifest.webmanifest",
-  "./styles/app.css",
-  "./data/gourmet.js",
-  "./data/juit.js",
-  "./data/foods.js",
-];
+const CACHE = "teller-v2";
+const CORE = ["./", "./index.html"];
+const OPTIONAL = ["./icon.png", "./manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting())
-  );
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE);
+    await cache.addAll(CORE);
+    // Optionales einzeln nachladen, Fehler ignorieren (falls Datei fehlt).
+    await Promise.all(OPTIONAL.map((u) => cache.add(u).catch(() => {})));
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener("activate", (event) => {
@@ -38,7 +34,7 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(req.url);
   // Nur eigene Dateien behandeln. CDN, Schriftarten und die Anthropic API
-  // laufen unverändert über das normale Netzwerk.
+  // laufen unveraendert ueber das normale Netzwerk.
   if (url.origin !== self.location.origin) return;
 
   event.respondWith((async () => {
