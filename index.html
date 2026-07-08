@@ -94,6 +94,7 @@ body {
 @keyframes fadeIn { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }
 
 .sheet-in { animation: sheetIn .3s cubic-bezier(.22,.61,.36,1) both; }
+.sheet-in { overflow-x: hidden; }
 @keyframes sheetIn { from { transform: translateY(100%) } to { transform: none } }
 
 .toast-in { animation: toastIn .3s cubic-bezier(.22,.61,.36,1) both; }
@@ -1061,7 +1062,7 @@ function ResultEditor({ draft, setDraft, mealId, onConfirm, onBack }) {
 
 function ListRow({ children, onPick, onDelete, delLabel }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, background: COLORS.card, borderRadius: 12, padding: "10px 12px", border: "1px solid var(--line)" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, background: COLORS.card, borderRadius: 12, padding: "10px 12px", border: "1px solid var(--line)" }}>
       <button onClick={onPick} style={{ flex: 1, minWidth: 0, border: "none", background: "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", color: COLORS.ink, padding: 0 }}>
         {children}
       </button>
@@ -1189,7 +1190,7 @@ function AddSheet({ mealId, onAdd, onClose, features }) {
         ) : (
           <>
             <Seg small options={availTabs} value={tab} onChange={(t) => { setTab(t); setErr(""); }} />
-            <div style={{ marginTop: 16, display: "grid", gap: 14 }}>
+            <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 14 }}>
               {err && <div style={{ background: COLORS.berrySoft, color: COLORS.berry, borderRadius: 12, padding: "10px 14px", fontSize: 13, lineHeight: 1.45 }}>{err}</div>}
               {busy ? (
                 <div style={{ textAlign: "center", padding: "34px 0" }}>
@@ -1242,7 +1243,7 @@ function AddSheet({ mealId, onAdd, onClose, features }) {
                           ))}
                         </div>
                       )}
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 10 }}>
                         <button onClick={lookupGourmet} disabled={!gNr.trim()}
                           style={{ minHeight: 50, border: "none", borderRadius: 14, background: gNr.trim() ? COLORS.green : COLORS.line, color: gNr.trim() ? COLORS.onAccent : COLORS.muted, fontSize: 14.5, fontWeight: 700, fontFamily: "inherit", cursor: gNr.trim() ? "pointer" : "default" }}>Werte holen</button>
                         <button onClick={() => gFileRef.current?.click()}
@@ -2034,7 +2035,7 @@ function SuggestSheet({ targets, day, onAdd, onClose, onChanged }) {
                 <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: ".05em", margin: "2px 0 8px" }}>Gemerkte Gerichte</div>
                 <div style={{ display: "grid", gap: 6 }}>
                   {saved.map((s) => (
-                    <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, background: COLORS.card, borderRadius: 12, padding: "10px 12px", border: "1px solid var(--line)" }}>
+                    <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, background: COLORS.card, borderRadius: 12, padding: "10px 12px", border: "1px solid var(--line)" }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 13.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</div>
                         <div style={{ fontSize: 12, color: COLORS.muted, fontVariantNumeric: "tabular-nums" }}>{r(s.kcal)} kcal · {macroLine(s)}</div>
