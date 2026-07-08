@@ -106,6 +106,17 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 input:focus, select:focus, textarea:focus { border-color: var(--green); }
 
+/* Datumsfeld an normale Felder angleichen — iOS/Safari rendert es sonst
+   deutlich höher und breiter als ein Zahlenfeld. */
+input[type="date"] {
+  -webkit-appearance: none;
+  appearance: none;
+  min-width: 0;
+}
+input[type="date"]::-webkit-date-and-time-value { text-align: left; margin: 0; padding: 0; }
+input[type="date"]::-webkit-datetime-edit { padding: 0; line-height: normal; }
+input[type="date"]::-webkit-calendar-picker-indicator { margin: 0 0 0 4px; padding: 0; }
+
 /* dezente Scrollbars in Listen */
 .thin-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
 .thin-scroll::-webkit-scrollbar-thumb { background: var(--line); border-radius: 99px; }
@@ -664,6 +675,57 @@ const JSON_RULES =
   'Antworte AUSSCHLIESSLICH mit einem einzigen JSON-Objekt, ohne Markdown, ohne Erklärung, exakt in diesem Format: ' +
   '{"name":"kurzer Gerichtname auf Deutsch (max. 4 Wörter)","kcal":Zahl,"protein":Zahl,"carbs":Zahl,"fat":Zahl,"portion":"geschätzte Gesamtmenge, z.B. 350 g","note":"ein kurzer Satz zur Einschätzung"} ' +
   "Alle Werte gelten für die GESAMTE Portion. protein, carbs und fat in Gramm, als ganze Zahlen. Schätze realistisch, nicht vorsichtig-niedrig.";
+
+/* ---- KI-Kochvorschläge: mehrere Gerichte passend zum Restbudget ---- */
+function parseSuggestions(text) {
+  const clean = text.replace(/```json|```/g, "").trim();
+  const start = clean.indexOf("{"), end = clean.lastIndexOf("}");
+  if (start === -1 || end === -1) throw new Error("Kein JSON gefunden");
+  const obj = JSON.parse(clean.slice(start, end + 1));
+  if (obj.error) throw new Error(String(obj.error));
+  const arr = Array.isArray(obj.suggestions) ? obj.suggestions : (Array.isArray(obj.gerichte) ? obj.gerichte : []);
+  const out = arr.map((o) => ({
+    name: String(o.name || "Gericht"),
+    kcal: r(o.kcal), protein: r(o.protein), carbs: r(o.carbs), fat: r(o.fat),
+    portion: o.portion ? String(o.portion) : "",
+    note: o.note ? String(o.note) : "",
+  })).filter((o) => o.name && (o.kcal || o.protein || o.carbs || o.fat));
+  if (!out.length) throw new Error("Keine Vorschläge erhalten");
+  return out;
+}
+
+async function suggestMeals(remain, ingredients, exclusions) {
+  const key = getApiKey();
+  if (!key) throw new Error("Kein API-Key hinterlegt — öffne die Einstellungen (⚙) und trag deinen Anthropic-API-Key ein.");
+  const budgetTxt =
+    `Übriges Tagesbudget: ${remain.kcal} kcal, ${remain.protein} g Protein, ${remain.carbs} g Kohlenhydrate, ${remain.fat} g Fett.`;
+  const ingTxt = ingredients && ingredients.trim()
+    ? `Vorhandene Zutaten: ${ingredients.trim()}.`
+    : "Es wurden keine konkreten Zutaten angegeben — schlage gängige, einfach umsetzbare Gerichte vor.";
+  const exclTxt = exclusions && exclusions.length
+    ? `Verwende AUF KEINEN FALL diese Lebensmittel: ${exclusions.join(", ")}.`
+    : "";
+  const prompt =
+    `Du bist Ernährungsexperte und Koch. Der Nutzer möchte Vorschläge für ein Gericht, das er jetzt kochen und essen kann. ` +
+    `${budgetTxt} ${ingTxt} ${exclTxt} ` +
+    `Schlage GENAU 4 verschiedene, realistische Gerichte vor, die möglichst gut in das übrige Budget passen — zuerst die Kalorien treffen, dann möglichst viel Protein. ` +
+    `Nutze bevorzugt die vorhandenen Zutaten; wenige gängige Ergänzungen (Öl, Salz, Gewürze, Zwiebel) sind ok, größere Ergänzungen bitte in note erwähnen. ` +
+    `Antworte AUSSCHLIESSLICH mit einem einzigen JSON-Objekt, ohne Markdown, ohne Erklärung, exakt in diesem Format: ` +
+    `{"suggestions":[{"name":"kurzer Gerichtname auf Deutsch (max. 5 Wörter)","kcal":Zahl,"protein":Zahl,"carbs":Zahl,"fat":Zahl,"portion":"kurze Mengenangabe, z.B. 300 g","note":"ein kurzer Satz: warum es passt und wie man es schnell zubereitet"}]} ` +
+    `Alle Werte gelten für die GESAMTE Portion, protein/carbs/fat in Gramm als ganze Zahlen. Schätze realistisch.`;
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json", "x-api-key": key,
+      "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000, messages: [{ role: "user", content: [{ type: "text", text: prompt }] }] }),
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message || "API-Fehler");
+  const text = (data.content || []).map((i) => (i.type === "text" ? i.text : "")).join("\n");
+  return parseSuggestions(text);
+}
 
 function fileToCompressedBase64(file, maxDim = 1024) {
   return new Promise((resolve, reject) => {
@@ -1324,37 +1386,75 @@ function WeekBudgetCard({ consumed, budget }) {
 /* ---------------- Gewicht ---------------- */
 
 function WeightChart({ entries, target }) {
-  const W = 320, H = 150, padL = 8, padR = 8, padT = 12, padB = 20;
+  const W = 320, H = 172, padL = 30, padR = 12, padT = 14, padB = 22;
   const pts = entries.map((e) => ({ t: new Date(e.d).getTime(), kg: Number(e.kg) }));
+  const single = pts.length === 1;
   const minT = pts[0].t, maxT = pts[pts.length - 1].t;
   const spanT = Math.max(1, maxT - minT);
   const kgs = pts.map((p) => p.kg).concat(target ? [Number(target)] : []);
   let minK = Math.min(...kgs), maxK = Math.max(...kgs);
   if (maxK - minK < 2) { minK -= 1; maxK += 1; }
   const spanK = maxK - minK;
-  const x = (t) => padL + ((t - minT) / spanT) * (W - padL - padR);
+  const plotBottom = H - padB;
+  const x = (t) => single ? padL + (W - padL - padR) / 2 : padL + ((t - minT) / spanT) * (W - padL - padR);
   const y = (kg) => padT + (1 - (kg - minK) / spanK) * (H - padT - padB);
   const line = pts.map((p, i) => `${i ? "L" : "M"}${x(p.t).toFixed(1)},${y(p.kg).toFixed(1)}`).join(" ");
+  const area = !single ? `${line} L${x(maxT).toFixed(1)},${plotBottom.toFixed(1)} L${x(minT).toFixed(1)},${plotBottom.toFixed(1)} Z` : "";
   const ty = target ? y(Number(target)) : null;
+  const fmtD = (t) => new Date(t).toLocaleDateString("de-AT", { day: "numeric", month: "short" });
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block" }} preserveAspectRatio="none">
-      {ty != null && ty > padT && ty < H - padB && (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ display: "block", width: "100%", height: "auto" }}>
+      <defs>
+        <linearGradient id="wfill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="var(--green)" stopOpacity="0.20" />
+          <stop offset="100%" stopColor="var(--green)" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <line x1={padL} y1={padT} x2={W - padR} y2={padT} stroke="var(--line)" strokeWidth="1" />
+      <line x1={padL} y1={plotBottom} x2={W - padR} y2={plotBottom} stroke="var(--line)" strokeWidth="1" />
+      <text x={padL - 5} y={padT + 3} textAnchor="end" fontSize="9" fill="var(--muted)">{nf(Math.round(maxK * 10) / 10)}</text>
+      <text x={padL - 5} y={plotBottom + 3} textAnchor="end" fontSize="9" fill="var(--muted)">{nf(Math.round(minK * 10) / 10)}</text>
+      {ty != null && ty > padT && ty < plotBottom && (
         <g>
           <line x1={padL} y1={ty} x2={W - padR} y2={ty} stroke="var(--amber)" strokeWidth="1.4" strokeDasharray="5 4" />
-          <text x={W - padR} y={ty - 4} textAnchor="end" fontSize="10" fill="var(--amber)">Ziel {target} kg</text>
+          <text x={W - padR} y={ty - 4} textAnchor="end" fontSize="10" fill="var(--amber)">Ziel {nf(target)} kg</text>
         </g>
       )}
-      <path d={line} fill="none" stroke="var(--green)" strokeWidth="2.4" strokeLinejoin="round" strokeLinecap="round" />
+      {area && <path d={area} fill="url(#wfill)" stroke="none" />}
+      {!single && <path d={line} fill="none" stroke="var(--green)" strokeWidth="2.4" strokeLinejoin="round" strokeLinecap="round" />}
       {pts.map((p, i) => <circle key={i} cx={x(p.t)} cy={y(p.kg)} r={i === pts.length - 1 ? 4 : 2.6} fill="var(--green)" />)}
+      {single && <text x={x(pts[0].t)} y={y(pts[0].kg) - 10} textAnchor="middle" fontSize="11" fontWeight="700" fill="var(--green)">{nf(pts[0].kg)} kg</text>}
+      <text x={padL} y={H - 6} textAnchor="start" fontSize="9" fill="var(--muted)">{fmtD(minT)}</text>
+      {!single && <text x={W - padR} y={H - 6} textAnchor="end" fontSize="9" fill="var(--muted)">{fmtD(maxT)}</text>}
     </svg>
   );
 }
 
-function WeightTab({ profile }) {
+const BMI_CATS = [
+  { max: 18.5, label: "Untergewicht", color: "var(--amber)" },
+  { max: 25, label: "Normalgewicht", color: "var(--green)" },
+  { max: 30, label: "Übergewicht", color: "var(--amber)" },
+  { max: Infinity, label: "Adipositas", color: "var(--berry)" },
+];
+
+function StatTile({ label, value, sub, color }) {
+  return (
+    <div style={{ background: "var(--bg-elev)", borderRadius: 14, padding: "12px 12px", textAlign: "center", minWidth: 0 }}>
+      <div className="display" style={{ fontSize: 20, color: color || "var(--ink)", fontVariantNumeric: "tabular-nums", lineHeight: 1.1 }}>{value}</div>
+      <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>{label}</div>
+      {sub && <div style={{ fontSize: 10.5, color: "var(--muted)", marginTop: 1 }}>{sub}</div>}
+    </div>
+  );
+}
+
+function WeightTab({ profile, onUpdateProfile }) {
   const [entries, setEntries] = useState([]);
   const [kg, setKg] = useState("");
   const [d, setD] = useState(dateKey(new Date()));
+  const [range, setRange] = useState("all");
+  const [tw, setTw] = useState(profile.targetWeight != null ? String(profile.targetWeight) : "");
   useEffect(() => { (async () => setEntries(await loadJSON("weights", [])))(); }, []);
+  useEffect(() => { setTw(profile.targetWeight != null ? String(profile.targetWeight) : ""); }, [profile.targetWeight]);
 
   async function add() {
     const v = parseFloat(String(kg).replace(",", "."));
@@ -1363,14 +1463,34 @@ function WeightTab({ profile }) {
     setEntries(next); await saveJSON("weights", next); setKg("");
   }
   async function del(dk) { const next = entries.filter((e) => e.d !== dk); setEntries(next); await saveJSON("weights", next); }
+  function saveTarget() {
+    const v = tw.trim() === "" ? "" : parseFloat(String(tw).replace(",", "."));
+    if (v !== "" && !(v > 0)) return;
+    if (onUpdateProfile) onUpdateProfile({ targetWeight: v === "" ? "" : v });
+  }
 
   const sorted = entries;
   const start = sorted[0], current = sorted[sorted.length - 1];
   const change = start && current ? current.kg - start.kg : 0;
   const target = profile.targetWeight ? Number(profile.targetWeight) : null;
 
+  // 7-Tage-Änderung: Eintrag am/vor 7 Tagen vor dem aktuellen finden
+  let change7 = null;
+  if (current && sorted.length >= 2) {
+    const curT = new Date(current.d).getTime();
+    let ref = sorted[0];
+    for (const e of sorted) { const t = new Date(e.d).getTime(); if (t <= curT - 7 * 86400000) ref = e; }
+    change7 = current.kg - ref.kg;
+  }
+
+  // BMI aus aktuellem Gewicht (oder Profil) + Größe
+  const h = Number(profile.height) || 0;
+  const bmiKg = current ? current.kg : Number(profile.weight) || 0;
+  let bmi = null, bmiCat = null;
+  if (h > 0 && bmiKg > 0) { bmi = bmiKg / Math.pow(h / 100, 2); bmiCat = BMI_CATS.find((c) => bmi < c.max); }
+
   // lineare Regression für Wochentrend
-  let prognosis = null;
+  let slope = null, prognosis = null;
   if (sorted.length >= 2) {
     const t0 = new Date(sorted[0].d).getTime();
     const xs = sorted.map((e) => (new Date(e.d).getTime() - t0) / 86400000);
@@ -1378,7 +1498,7 @@ function WeightTab({ profile }) {
     const n = xs.length, sx = xs.reduce((a, b) => a + b, 0), sy = ys.reduce((a, b) => a + b, 0);
     const sxx = xs.reduce((a, b) => a + b * b, 0), sxy = xs.reduce((a, b, i) => a + b * ys[i], 0);
     const denom = n * sxx - sx * sx;
-    const slope = denom !== 0 ? (n * sxy - sx * sy) / denom : 0; // kg pro Tag
+    slope = denom !== 0 ? (n * sxy - sx * sy) / denom : 0; // kg pro Tag
     const perWeek = slope * 7;
     if (target != null && current) {
       const need = target - current.kg;
@@ -1392,6 +1512,29 @@ function WeightTab({ profile }) {
       } else prognosis = { perWeek, text: "Aktueller Trend führt nicht Richtung Ziel.", off: true };
     } else prognosis = { perWeek, text: target == null ? "Trag ein Zielgewicht ein für eine Prognose." : null };
   }
+  const perWeek = slope != null ? slope * 7 : null;
+
+  // Zeitraum-Filter nur für den Graphen
+  const now = Date.now();
+  const rangeDays = range === "7" ? 7 : range === "30" ? 30 : null;
+  let chartEntries = sorted;
+  if (rangeDays) {
+    const cut = now - rangeDays * 86400000;
+    const f = sorted.filter((e) => new Date(e.d).getTime() >= cut);
+    chartEntries = f.length >= 1 ? f : sorted.slice(-1);
+  }
+
+  // Fortschritt Richtung Ziel
+  let progress = null, remainKg = null, reachedTarget = false;
+  if (target != null && start && current) {
+    remainKg = current.kg - target;
+    reachedTarget = Math.abs(remainKg) < 0.3;
+    const denomP = target - start.kg;
+    progress = denomP === 0 ? 1 : Math.min(1, Math.max(0, (current.kg - start.kg) / denomP));
+  }
+
+  const changeColor = (v) => (v <= 0 ? "var(--green)" : "var(--berry)");
+  const fmtDelta = (v) => (v > 0 ? "+" : "") + v.toFixed(1).replace(".", ",");
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
@@ -1404,26 +1547,79 @@ function WeightTab({ profile }) {
         </div>
       </Card>
 
-      {sorted.length >= 2 ? (
+      {sorted.length >= 1 && (
         <Card>
-          <div style={{ fontSize: 15.5, fontWeight: 700, marginBottom: 8 }}>Verlauf</div>
-          <WeightChart entries={sorted} target={target} />
-          <div style={{ display: "flex", justifyContent: "space-between", textAlign: "center", marginTop: 12, gap: 8 }}>
-            <div style={{ flex: 1 }}><div className="display" style={{ fontSize: 18 }}>{nf(start.kg)}</div><div style={{ fontSize: 11.5, color: COLORS.muted }}>Start</div></div>
-            <div style={{ flex: 1 }}><div className="display" style={{ fontSize: 18 }}>{nf(current.kg)}</div><div style={{ fontSize: 11.5, color: COLORS.muted }}>Aktuell</div></div>
-            <div style={{ flex: 1 }}><div className="display" style={{ fontSize: 18, color: change <= 0 ? "var(--green)" : "var(--berry)" }}>{change > 0 ? "+" : ""}{change.toFixed(1).replace(".", ",")}</div><div style={{ fontSize: 11.5, color: COLORS.muted }}>Änderung</div></div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
+            <div style={{ fontSize: 13, color: COLORS.muted }}>Aktuelles Gewicht</div>
+            <div className="display" style={{ fontSize: 30, color: COLORS.ink }}>{nf(current.kg)} <span style={{ fontSize: 16, color: COLORS.muted }}>kg</span></div>
           </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+            <StatTile label="seit Start" value={sorted.length >= 2 ? fmtDelta(change) : "—"} color={sorted.length >= 2 ? changeColor(change) : COLORS.muted} sub="kg" />
+            <StatTile label="7 Tage" value={change7 != null ? fmtDelta(change7) : "—"} color={change7 != null ? changeColor(change7) : COLORS.muted} sub="kg" />
+            <StatTile label="Trend" value={perWeek != null ? fmtDelta(perWeek) : "—"} color={perWeek != null ? changeColor(perWeek) : COLORS.muted} sub="kg/Woche" />
+          </div>
+          {bmi != null && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--line)" }}>
+              <div style={{ fontSize: 13, color: COLORS.muted }}>BMI</div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                <span className="display" style={{ fontSize: 18, color: COLORS.ink, fontVariantNumeric: "tabular-nums" }}>{bmi.toFixed(1).replace(".", ",")}</span>
+                <span style={{ fontSize: 12.5, fontWeight: 600, color: bmiCat.color }}>{bmiCat.label}</span>
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
+
+      {sorted.length >= 1 ? (
+        <Card>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8 }}>
+            <div style={{ fontSize: 15.5, fontWeight: 700 }}>Verlauf</div>
+            <div style={{ width: 168 }}>
+              <Seg small options={[{ id: "7", label: "7 T" }, { id: "30", label: "30 T" }, { id: "all", label: "Alles" }]} value={range} onChange={setRange} />
+            </div>
+          </div>
+          <WeightChart entries={chartEntries} target={target} />
+          {sorted.length === 1 && <p style={{ margin: "10px 0 0", fontSize: 12.5, color: COLORS.muted, textAlign: "center", lineHeight: 1.5 }}>Ab dem zweiten Eintrag zeichne ich hier die Verlaufslinie.</p>}
         </Card>
       ) : (
-        <Card><p style={{ margin: 0, fontSize: 13.5, color: COLORS.muted, lineHeight: 1.5, textAlign: "center" }}>Ab dem zweiten Eintrag zeige ich hier Verlauf, Änderung und eine Prognose.</p></Card>
+        <Card><p style={{ margin: 0, fontSize: 13.5, color: COLORS.muted, lineHeight: 1.5, textAlign: "center" }}>Trag dein erstes Gewicht ein — danach zeige ich hier Verlauf, Trend und eine Prognose.</p></Card>
       )}
+
+      <Card>
+        <div style={{ fontSize: 15.5, fontWeight: 700, marginBottom: 10 }}>Ziel & Fortschritt</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "end" }}>
+          <Field label="Zielgewicht" suffix="kg">
+            <input type="number" inputMode="decimal" style={inputStyle} value={tw} onChange={(e) => setTw(e.target.value)}
+              onBlur={saveTarget} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } }} placeholder="z. B. 74" />
+          </Field>
+          <button onClick={saveTarget} style={{ minHeight: 48, padding: "0 16px", border: "1.5px solid var(--green)", borderRadius: 12, background: "transparent", color: COLORS.green, fontSize: 14.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>Setzen</button>
+        </div>
+        {target != null && current ? (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: COLORS.muted, marginBottom: 6 }}>
+              <span>Start {start ? nf(start.kg) : "—"} kg</span>
+              <span>Ziel {nf(target)} kg</span>
+            </div>
+            <div style={{ height: 10, borderRadius: 99, background: "var(--bg-elev)", overflow: "hidden" }}>
+              <div style={{ width: `${Math.round((progress || 0) * 100)}%`, height: "100%", borderRadius: 99, background: reachedTarget ? "var(--green)" : "var(--green)", transition: "width .5s ease" }} />
+            </div>
+            <div style={{ fontSize: 13.5, color: COLORS.ink, marginTop: 10, lineHeight: 1.5 }}>
+              {reachedTarget
+                ? <>Zielgewicht praktisch erreicht 🎉</>
+                : <>Noch <strong>{Math.abs(remainKg).toFixed(1).replace(".", ",")} kg</strong> bis zu deinem Ziel · {Math.round((progress || 0) * 100)} % geschafft.</>}
+            </div>
+          </div>
+        ) : (
+          <p style={{ fontSize: 12.5, color: COLORS.muted, lineHeight: 1.5, margin: "10px 0 0" }}>Setz ein Zielgewicht, dann zeige ich Fortschritt und eine Prognose.</p>
+        )}
+      </Card>
 
       {prognosis && (
         <Card style={{ background: "var(--green-soft)" }}>
           <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>Prognose</div>
           <div style={{ fontSize: 13.5, color: COLORS.ink, lineHeight: 1.55 }}>
             Aktueller Trend: <strong>{prognosis.perWeek > 0 ? "+" : ""}{prognosis.perWeek.toFixed(2).replace(".", ",")} kg / Woche</strong>.
-            {prognosis.text ? <> {prognosis.text}</> : <> Bei gleichbleibendem Tempo erreichst du dein Ziel von {target} kg in etwa <strong>{prognosis.weeks} Wochen</strong> (ca. {prognosis.date.toLocaleDateString("de-AT", { month: "long", year: "numeric" })}).</>}
+            {prognosis.text ? <> {prognosis.text}</> : <> Bei gleichbleibendem Tempo erreichst du dein Ziel von {nf(target)} kg in etwa <strong>{prognosis.weeks} Wochen</strong> (ca. {prognosis.date.toLocaleDateString("de-AT", { month: "long", year: "numeric" })}).</>}
           </div>
           {!prognosis.reached && <div style={{ fontSize: 11.5, color: COLORS.muted, marginTop: 6 }}>Grobe Schätzung aus dem bisherigen Verlauf — schwankt bei wenigen Einträgen stark.</div>}
         </Card>
@@ -1569,9 +1765,24 @@ function Settings({ profile, theme, onToggleTheme, onSave, onClose }) {
   const [apiKey, setApiKey] = useState(getApiKey());
   const [adv, setAdv] = useState(false);
   const [msg, setMsg] = useState("");
+  const [exclusions, setExclusions] = useState([]);
+  const [exclInput, setExclInput] = useState("");
   const importRef = useRef(null);
   const setTarget = (k) => (e) => setT({ ...t, [k]: e.target.value });
   const recalced = calcTargets(p);
+
+  useEffect(() => { (async () => setExclusions(await loadJSON("exclusions", [])))(); }, []);
+  async function addExcl() {
+    const parts = exclInput.split(/[,\n]/).map((s) => s.trim()).filter(Boolean);
+    if (!parts.length) return;
+    const merged = [...exclusions];
+    parts.forEach((pp) => { if (!merged.some((x) => x.toLowerCase() === pp.toLowerCase())) merged.push(pp); });
+    setExclusions(merged); setExclInput(""); await saveJSON("exclusions", merged);
+  }
+  async function removeExcl(i) {
+    const next = exclusions.filter((_, idx) => idx !== i);
+    setExclusions(next); await saveJSON("exclusions", next);
+  }
 
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 60, background: COLORS.bg, overflowY: "auto" }}>
@@ -1611,6 +1822,29 @@ function Settings({ profile, theme, onToggleTheme, onSave, onClose }) {
             <Field label="Wasserziel" suffix="ml, leer = aus Gewicht">
               <input type="number" inputMode="numeric" style={inputStyle} value={p.waterGoal} onChange={(e) => setP({ ...p, waterGoal: e.target.value })} placeholder={String(derivedWaterGoal(p))} />
             </Field>
+          </section>
+
+          <section style={{ display: "grid", gap: 10 }}>
+            <SectionTitle>Kochvorschläge</SectionTitle>
+            <p style={{ fontSize: 13, color: COLORS.muted, lineHeight: 1.5, margin: 0 }}>
+              Lebensmittel, die die KI bei den Kochvorschlägen meiden soll — etwa Unverträglichkeiten oder was du einfach nicht magst.
+            </p>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input style={{ ...inputStyle, flex: 1 }} value={exclInput} onChange={(e) => setExclInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addExcl(); } }} placeholder="z. B. Koriander" />
+              <button onClick={addExcl} disabled={!exclInput.trim()}
+                style={{ minHeight: 48, padding: "0 18px", border: "none", borderRadius: 12, background: exclInput.trim() ? COLORS.green : COLORS.line, color: exclInput.trim() ? COLORS.onAccent : COLORS.muted, fontSize: 15, fontWeight: 700, fontFamily: "inherit", cursor: exclInput.trim() ? "pointer" : "default" }}>Hinzufügen</button>
+            </div>
+            {exclusions.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 2 }}>
+                {exclusions.map((x, i) => (
+                  <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: COLORS.card, border: "1px solid var(--line)", borderRadius: 99, padding: "6px 10px 6px 12px", fontSize: 13.5 }}>
+                    {x}
+                    <button aria-label={`${x} entfernen`} onClick={() => removeExcl(i)} style={{ border: "none", background: "transparent", color: COLORS.muted, cursor: "pointer", padding: 0, display: "flex" }}><Icon d={ICONS.close} size={14} /></button>
+                  </span>
+                ))}
+              </div>
+            )}
           </section>
 
           <section style={{ display: "grid", gap: 10 }}>
@@ -1683,6 +1917,193 @@ function BottomNav({ view, setView }) {
   );
 }
 
+/* ---------------- KI-Kochvorschläge ---------------- */
+
+function SuggestSheet({ targets, day, onAdd, onClose, onChanged }) {
+  const eaten = dayKcal(day);
+  const remainCalc = {
+    kcal: Math.max(0, r(targets.kcal) - eaten),
+    protein: Math.max(0, r(targets.protein) - r(daySum(day, "protein"))),
+    carbs: Math.max(0, r(targets.carbs) - r(daySum(day, "carbs"))),
+    fat: Math.max(0, r(targets.fat) - r(daySum(day, "fat"))),
+  };
+  const [budget, setBudget] = useState(remainCalc);
+  const [ingredients, setIngredients] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [results, setResults] = useState(null);
+  const [saved, setSaved] = useState([]);
+  const [savedKeys, setSavedKeys] = useState({});
+  const [exclusions, setExclusions] = useState([]);
+  const [logging, setLogging] = useState(null);
+  const [flash, setFlash] = useState("");
+
+  useEffect(() => { (async () => { setSaved(await loadJSON("suggestions", [])); setExclusions(await loadJSON("exclusions", [])); })(); }, []);
+
+  const setB = (k) => (e) => setBudget({ ...budget, [k]: e.target.value });
+  const overBudget = eaten > r(targets.kcal);
+
+  async function run() {
+    setBusy(true); setErr(""); setResults(null); setFlash("");
+    try {
+      const b = { kcal: r(budget.kcal), protein: r(budget.protein), carbs: r(budget.carbs), fat: r(budget.fat) };
+      const list = await suggestMeals(b, ingredients, exclusions);
+      setResults(list);
+    } catch (e) { setErr("Konnte keine Vorschläge holen — bitte nochmal versuchen. (" + e.message + ")"); }
+    finally { setBusy(false); }
+  }
+
+  async function saveSuggestion(item) {
+    const k = item.name + "|" + item.kcal;
+    if (savedKeys[k]) return;
+    const withId = { ...item, id: "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5) };
+    const next = [withId, ...saved];
+    setSaved(next); setSavedKeys({ ...savedKeys, [k]: true });
+    await saveJSON("suggestions", next); onChanged && onChanged();
+  }
+  async function removeSaved(id) {
+    const next = saved.filter((s) => s.id !== id);
+    setSaved(next); await saveJSON("suggestions", next); onChanged && onChanged();
+  }
+  async function confirmLog(mealId) {
+    const item = logging; if (!item) return;
+    const entry = { name: item.name, kcal: r(item.kcal), protein: r(item.protein), carbs: r(item.carbs), fat: r(item.fat), id: Date.now() + "-" + Math.random().toString(36).slice(2, 7) };
+    onAdd(mealId, entry);
+    const label = (MEALS.find((m) => m.id === mealId) || {}).label || "";
+    setLogging(null); setFlash(`„${item.name}" zu ${label} hinzugefügt ✓`);
+  }
+
+  const macroLine = (o) => `${r(o.protein)} P · ${r(o.carbs)} K · ${r(o.fat)} F`;
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(10,20,15,.5)", display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={onClose}>
+      <div className="sheet-in thin-scroll" onClick={(e) => e.stopPropagation()}
+        style={{ background: COLORS.bg, width: "100%", maxWidth: 520, maxHeight: "92vh", overflowY: "auto", borderRadius: "24px 24px 0 0", padding: "16px 18px calc(28px + env(safe-area-inset-bottom))", boxSizing: "border-box" }}>
+        <div style={{ width: 42, height: 4, borderRadius: 99, background: COLORS.line, margin: "0 auto 14px" }} />
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14 }}>
+          <div className="display" style={{ fontSize: 23, color: COLORS.ink }}>🍳 Was kann ich kochen?</div>
+          <button onClick={onClose} style={{ border: "none", background: "transparent", color: COLORS.muted, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Schließen</button>
+        </div>
+
+        {logging ? (
+          <div style={{ display: "grid", gap: 12 }}>
+            <div style={{ fontSize: 14.5, color: COLORS.ink, lineHeight: 1.5 }}>
+              Zu welcher Mahlzeit soll <strong>{logging.name}</strong> ({r(logging.kcal)} kcal)?
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              {MEALS.map((m) => (
+                <button key={m.id} onClick={() => confirmLog(m.id)}
+                  style={{ minHeight: 56, border: "1.5px solid var(--line)", borderRadius: 14, background: COLORS.card, color: COLORS.ink, fontSize: 15, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
+                  {m.emoji} {m.label}
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setLogging(null)} style={{ minHeight: 44, border: "none", borderRadius: 12, background: "transparent", color: COLORS.muted, fontSize: 14, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>Abbrechen</button>
+          </div>
+        ) : (
+          <div style={{ display: "grid", gap: 14 }}>
+            {flash && <div style={{ background: COLORS.greenSoft, color: COLORS.green, borderRadius: 12, padding: "10px 14px", fontSize: 13.5, fontWeight: 600 }}>{flash}</div>}
+
+            {saved.length > 0 && (
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: ".05em", margin: "2px 0 8px" }}>Gemerkte Gerichte</div>
+                <div style={{ display: "grid", gap: 6 }}>
+                  {saved.map((s) => (
+                    <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, background: COLORS.card, borderRadius: 12, padding: "10px 12px", border: "1px solid var(--line)" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</div>
+                        <div style={{ fontSize: 12, color: COLORS.muted, fontVariantNumeric: "tabular-nums" }}>{r(s.kcal)} kcal · {macroLine(s)}</div>
+                      </div>
+                      <button onClick={() => setLogging(s)} style={{ border: "none", borderRadius: 99, background: COLORS.green, color: COLORS.onAccent, padding: "7px 12px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}>Gegessen</button>
+                      <button aria-label={`${s.name} löschen`} onClick={() => removeSaved(s.id)} style={{ border: "none", background: "transparent", color: COLORS.muted, cursor: "pointer", padding: "2px 4px", flexShrink: 0, display: "flex" }}><Icon d={ICONS.close} size={15} /></button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <Card pad={14} style={{ background: COLORS.greenSoft, border: "none" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: COLORS.ink }}>Übriges Budget</div>
+                <button onClick={() => setBudget(remainCalc)} style={{ border: "none", background: "transparent", color: COLORS.green, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>aus heute</button>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
+                {[["kcal", "kcal"], ["protein", "Protein"], ["carbs", "KH"], ["fat", "Fett"]].map(([k, lbl]) => (
+                  <label key={k} style={{ display: "block", minWidth: 0 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.muted, marginBottom: 4, textAlign: "center" }}>{lbl}</div>
+                    <input type="number" inputMode="numeric" value={budget[k]} onChange={setB(k)}
+                      style={{ width: "100%", boxSizing: "border-box", minHeight: 44, padding: "8px 6px", border: "1.5px solid var(--line)", borderRadius: 10, fontSize: 15, fontFamily: "inherit", color: "var(--ink)", background: "var(--card)", outline: "none", textAlign: "center", fontVariantNumeric: "tabular-nums" }} />
+                  </label>
+                ))}
+              </div>
+              {overBudget && <div style={{ fontSize: 12, color: COLORS.amberInk, marginTop: 8, lineHeight: 1.4 }}>Du bist heute schon am Kalorienziel — die Werte kannst du oben frei anpassen.</div>}
+            </Card>
+
+            {!getApiKey() && <KeyHint />}
+
+            <Field label="Welche Zutaten hast du da? (optional)">
+              <textarea rows={2} style={{ ...inputStyle, resize: "vertical" }} value={ingredients} onChange={(e) => setIngredients(e.target.value)} placeholder="z. B. Joghurt, Proteinpulver, Haferflocken, Banane" />
+            </Field>
+
+            {exclusions.length > 0 && (
+              <p style={{ fontSize: 12, color: COLORS.muted, lineHeight: 1.5, margin: "-6px 0 0" }}>
+                Wird gemieden: {exclusions.join(", ")}. (In den Einstellungen änderbar.)
+              </p>
+            )}
+
+            {busy ? (
+              <div style={{ textAlign: "center", padding: "30px 0" }}>
+                <div className="pulse display" style={{ fontSize: 19, color: COLORS.green }}>Claude sucht passende Gerichte …</div>
+                <div style={{ fontSize: 13, color: COLORS.muted, marginTop: 6 }}>dauert ein paar Sekunden</div>
+              </div>
+            ) : (
+              <button onClick={run}
+                style={{ minHeight: 52, border: "none", borderRadius: 14, background: COLORS.green, color: COLORS.onAccent, fontSize: 16, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
+                {results ? "Neue Vorschläge holen" : "Vorschläge holen"}
+              </button>
+            )}
+
+            {err && <div style={{ background: COLORS.berrySoft, color: COLORS.berry, borderRadius: 12, padding: "10px 14px", fontSize: 13, lineHeight: 1.45 }}>{err}</div>}
+
+            {results && results.length > 0 && (
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: ".05em" }}>Vorschläge</div>
+                {results.map((o, i) => {
+                  const k = o.name + "|" + o.kcal;
+                  const fits = r(o.kcal) <= r(budget.kcal) + 30;
+                  return (
+                    <Card key={i} pad={14}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+                        <div style={{ fontSize: 15, fontWeight: 700, minWidth: 0, overflowWrap: "anywhere" }}>{o.name}</div>
+                        <div style={{ fontSize: 15, fontWeight: 700, color: fits ? "var(--green)" : "var(--berry)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{r(o.kcal)} kcal</div>
+                      </div>
+                      <div style={{ fontSize: 12.5, color: COLORS.muted, fontVariantNumeric: "tabular-nums", marginTop: 2 }}>{macroLine(o)}{o.portion ? ` · ${o.portion}` : ""}</div>
+                      {o.note && <div style={{ fontSize: 13, color: COLORS.ink, lineHeight: 1.5, marginTop: 8 }}>{o.note}</div>}
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 12 }}>
+                        <button onClick={() => saveSuggestion(o)} disabled={!!savedKeys[k]}
+                          style={{ minHeight: 44, border: `1.5px solid ${savedKeys[k] ? "var(--line)" : "var(--green)"}`, borderRadius: 12, background: "transparent", color: savedKeys[k] ? COLORS.muted : COLORS.green, fontSize: 14, fontWeight: 700, fontFamily: "inherit", cursor: savedKeys[k] ? "default" : "pointer" }}>
+                          {savedKeys[k] ? "Gemerkt ✓" : "⭐ Merken"}
+                        </button>
+                        <button onClick={() => setLogging(o)}
+                          style={{ minHeight: 44, border: "none", borderRadius: 12, background: COLORS.green, color: COLORS.onAccent, fontSize: 14, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
+                          Direkt eintragen
+                        </button>
+                      </div>
+                    </Card>
+                  );
+                })}
+                <p style={{ fontSize: 12, color: COLORS.muted, lineHeight: 1.5, margin: "2px 0 0" }}>
+                  Werte sind KI-Schätzungen. „Merken" legt das Gericht oben ab — nach dem Kochen tippst du dort auf „Gegessen".
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ---------------- Haupt-App ---------------- */
 
 function TellerApp() {
@@ -1696,11 +2117,15 @@ function TellerApp() {
   const [weekConsumed, setWeekConsumed] = useState(0);
   const [sheet, setSheet] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showSuggest, setShowSuggest] = useState(false);
+  const [suggestCount, setSuggestCount] = useState(0);
   const [undo, setUndo] = useState(null);
   const undoTimer = useRef(null);
   const key = dateKey(date);
 
   useEffect(() => { (async () => { setProfile(migrateProfile(await loadJSON("profile", null))); setLoading(false); })(); }, []);
+  useEffect(() => { (async () => setSuggestCount((await loadJSON("suggestions", [])).length))(); }, []);
+  const refreshSuggestCount = async () => setSuggestCount((await loadJSON("suggestions", [])).length);
   useEffect(() => { (async () => setDay(await loadJSON("day:" + key, emptyDay())))(); }, [key]);
   useEffect(() => { (async () => { const w = await loadJSON("water:" + key, 0); setWater(Number(w) || 0); })(); }, [key]);
 
@@ -1751,6 +2176,7 @@ function TellerApp() {
     setDay(merged); await saveJSON("day:" + key, merged);
   }
   async function saveProfile(p) { const mp = migrateProfile(p); setProfile(mp); await saveJSON("profile", mp); setShowSettings(false); }
+  async function updateProfile(patch) { const mp = migrateProfile({ ...profile, ...patch }); setProfile(mp); await saveJSON("profile", mp); }
 
   if (loading) return <div className="pulse display" style={{ textAlign: "center", paddingTop: 120, fontSize: 22, color: "var(--green)" }}>Teller lädt …</div>;
   if (!profile) return <Onboarding onDone={saveProfile} />;
@@ -1802,6 +2228,12 @@ function TellerApp() {
                 <MacroBar label="Fett" val={daySum(day, "fat")} target={targets.fat} color="var(--berry)" soft="var(--berry-soft)" />
               </div>
             </Card>
+
+            <button onClick={() => setShowSuggest(true)}
+              style={{ width: "100%", marginTop: 12, minHeight: 50, borderRadius: 14, border: "none", background: "var(--green-soft)", color: "var(--green)", fontSize: 15, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+              🍳 Was kann ich kochen?
+              {suggestCount > 0 && <span style={{ background: "var(--green)", color: "var(--on-accent)", borderRadius: 99, fontSize: 12, fontWeight: 700, padding: "2px 8px", fontVariantNumeric: "tabular-nums" }}>{suggestCount}</span>}
+            </button>
 
             {profile.weekBudget && <WeekBudgetCard consumed={weekConsumed} budget={targets.kcal * 7} />}
             <WaterCard ml={water} goal={waterGoal} onAdd={(v) => setWaterMl(water + v)} onReset={() => setWaterMl(0)} />
@@ -1858,7 +2290,7 @@ function TellerApp() {
           </>
         )}
 
-        {view === "weight" && <WeightTab profile={profile} />}
+        {view === "weight" && <WeightTab profile={profile} onUpdateProfile={updateProfile} />}
         {view === "month" && <MonthTab profile={profile} />}
       </div>
 
@@ -1873,6 +2305,7 @@ function TellerApp() {
       <BottomNav view={view} setView={setView} />
 
       {sheet && <AddSheet mealId={sheet} onAdd={addEntry} onClose={() => setSheet(null)} />}
+      {showSuggest && <SuggestSheet targets={targets} day={day} onAdd={addEntry} onClose={() => { setShowSuggest(false); refreshSuggestCount(); }} onChanged={refreshSuggestCount} />}
       {showSettings && <Settings profile={profile} theme={theme} onToggleTheme={() => applyTheme(theme === "dark" ? "light" : "dark")} onSave={saveProfile} onClose={() => setShowSettings(false)} />}
     </div>
   );

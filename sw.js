@@ -6,7 +6,7 @@
    Die App steckt komplett in der index.html, daher muss nur diese eine Datei
    sicher im Cache liegen. Icon und Manifest werden nur bestmoeglich ergaenzt. */
 
-const CACHE = "teller-v2";
+const CACHE = "teller-v3";
 const CORE = ["./", "./index.html"];
 const OPTIONAL = ["./icon.png", "./manifest.webmanifest"];
 
