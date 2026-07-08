@@ -97,7 +97,7 @@ body {
 @keyframes sheetIn { from { transform: translateY(100%) } to { transform: none } }
 
 .toast-in { animation: toastIn .3s cubic-bezier(.22,.61,.36,1) both; }
-@keyframes toastIn { from { opacity:0; transform: translateY(20px) } to { opacity:1; transform:none } }
+@keyframes toastIn { from { opacity:0; transform: translate(-50%, 20px) } to { opacity:1; transform: translate(-50%, 0) } }
 
 button { font-family: inherit; }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
@@ -606,6 +606,7 @@ function migrateProfile(p) {
   if (p.targetWeight == null) p.targetWeight = "";
   if (p.weekBudget == null) p.weekBudget = false;
   if (p.waterGoal == null) p.waterGoal = "";
+  p.features = { ai: true, gourmet: true, juit: true, ...(p.features || {}) };
   return p;
 }
 
@@ -1073,8 +1074,15 @@ function ListRow({ children, onPick, onDelete, delLabel }) {
   );
 }
 
-function AddSheet({ mealId, onAdd, onClose }) {
-  const [tab, setTab] = useState("photo");
+function AddSheet({ mealId, onAdd, onClose, features }) {
+  const feat = features || { ai: true, gourmet: true, juit: true };
+  const availTabs = [
+    ...(feat.ai ? [{ id: "photo", label: "Foto" }, { id: "text", label: "Text" }] : []),
+    ...(feat.gourmet ? [{ id: "gourmet", label: "Gourmet" }] : []),
+    ...(feat.juit ? [{ id: "juit", label: "Juit" }] : []),
+    { id: "manual", label: "Meine" },
+  ];
+  const [tab, setTab] = useState(availTabs[0].id);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [draft, setDraft] = useState(null);
@@ -1157,11 +1165,6 @@ function AddSheet({ mealId, onAdd, onClose }) {
   const jqt = jq.trim().toLowerCase();
   const juitHits = jqt.length === 0 ? JUIT_DB : JUIT_DB.filter((d) => d[0].toLowerCase().includes(jqt) || d[1].toLowerCase().includes(jqt));
 
-  const tabs = [
-    { id: "photo", label: "Foto" }, { id: "text", label: "Text" },
-    { id: "gourmet", label: "Gourmet" }, { id: "juit", label: "Juit" }, { id: "manual", label: "Meine" },
-  ];
-
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(10,20,15,.5)", display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={onClose}>
       <div className="sheet-in thin-scroll" onClick={(e) => e.stopPropagation()}
@@ -1185,7 +1188,7 @@ function AddSheet({ mealId, onAdd, onClose }) {
             onBack={() => { setDraft(null); setPreview(null); }} />
         ) : (
           <>
-            <Seg small options={tabs} value={tab} onChange={(t) => { setTab(t); setErr(""); }} />
+            <Seg small options={availTabs} value={tab} onChange={(t) => { setTab(t); setErr(""); }} />
             <div style={{ marginTop: 16, display: "grid", gap: 14 }}>
               {err && <div style={{ background: COLORS.berrySoft, color: COLORS.berry, borderRadius: 12, padding: "10px 14px", fontSize: 13, lineHeight: 1.45 }}>{err}</div>}
               {busy ? (
@@ -1243,7 +1246,7 @@ function AddSheet({ mealId, onAdd, onClose }) {
                         <button onClick={lookupGourmet} disabled={!gNr.trim()}
                           style={{ minHeight: 50, border: "none", borderRadius: 14, background: gNr.trim() ? COLORS.green : COLORS.line, color: gNr.trim() ? COLORS.onAccent : COLORS.muted, fontSize: 14.5, fontWeight: 700, fontFamily: "inherit", cursor: gNr.trim() ? "pointer" : "default" }}>Werte holen</button>
                         <button onClick={() => gFileRef.current?.click()}
-                          style={{ minHeight: 50, border: "1.5px solid var(--green)", borderRadius: 14, background: "transparent", color: COLORS.green, fontSize: 14.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>📷 Packung scannen</button>
+                          style={{ minHeight: 50, border: "1.5px solid var(--green)", borderRadius: 14, background: "transparent", color: COLORS.green, fontSize: 14.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>📷 Scannen</button>
                       </div>
                       <input ref={gFileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) analyzePackage(f); e.target.value = ""; }} />
                       {Object.keys(gdb).length > 0 && (
@@ -1760,6 +1763,7 @@ function MonthTab({ profile }) {
 /* ---------------- Einstellungen ---------------- */
 
 function Settings({ profile, theme, onToggleTheme, onSave, onClose }) {
+  const [tab, setTab] = useState("body");
   const [p, setP] = useState(migrateProfile({ ...profile }));
   const [t, setT] = useState({ ...profile.targets });
   const [apiKey, setApiKey] = useState(getApiKey());
@@ -1769,6 +1773,7 @@ function Settings({ profile, theme, onToggleTheme, onSave, onClose }) {
   const [exclInput, setExclInput] = useState("");
   const importRef = useRef(null);
   const setTarget = (k) => (e) => setT({ ...t, [k]: e.target.value });
+  const setFeat = (k) => setP({ ...p, features: { ...p.features, [k]: !p.features[k] } });
   const recalced = calcTargets(p);
 
   useEffect(() => { (async () => setExclusions(await loadJSON("exclusions", [])))(); }, []);
@@ -1787,89 +1792,109 @@ function Settings({ profile, theme, onToggleTheme, onSave, onClose }) {
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 60, background: COLORS.bg, overflowY: "auto" }}>
       <div style={{ maxWidth: 480, margin: "0 auto", padding: "22px 20px calc(48px + env(safe-area-inset-bottom))" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 18 }}>
           <div className="display" style={{ fontSize: 27 }}>Einstellungen</div>
           <button onClick={onClose} style={{ border: "none", background: "transparent", color: COLORS.muted, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Fertig</button>
         </div>
 
-        <div style={{ display: "grid", gap: 22 }}>
-          <section style={{ display: "grid", gap: 12 }}>
-            <SectionTitle>Darstellung</SectionTitle>
-            <Toggle on={theme === "dark"} onClick={onToggleTheme} label={theme === "dark" ? "🌙 Dark Mode" : "☀️ Light Mode"} sub="Dunkles oder helles Design" />
-          </section>
+        <Seg options={[{ id: "body", label: "Körper & Ziele" }, { id: "tech", label: "Technik & Daten" }]} value={tab} onChange={setTab} />
 
-          <section style={{ display: "grid", gap: 14 }}>
-            <SectionTitle>Persönliche Voraussetzungen</SectionTitle>
-            <PersonalFields p={p} setP={setP} showAdvanced={adv} setShowAdvanced={setAdv} />
-            <button onClick={() => setT(recalced)} style={{ minHeight: 46, border: "1.5px solid var(--green)", borderRadius: 12, background: "transparent", color: COLORS.green, fontSize: 14, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
-              Ziele neu berechnen → {nf(recalced.kcal)} kcal
-            </button>
-          </section>
+        <div style={{ display: "grid", gap: 22, marginTop: 20 }}>
+          {tab === "body" && (
+            <>
+              <section style={{ display: "grid", gap: 14 }}>
+                <SectionTitle>Persönliche Voraussetzungen</SectionTitle>
+                <PersonalFields p={p} setP={setP} showAdvanced={adv} setShowAdvanced={setAdv} />
+                <button onClick={() => setT(recalced)} style={{ minHeight: 46, border: "1.5px solid var(--green)", borderRadius: 12, background: "transparent", color: COLORS.green, fontSize: 14, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
+                  Ziele neu berechnen → {nf(recalced.kcal)} kcal
+                </button>
+              </section>
 
-          <section style={{ display: "grid", gap: 10 }}>
-            <SectionTitle>Tagesziele (manuell anpassbar)</SectionTitle>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <Field label="Kalorien" suffix="kcal"><input type="number" style={inputStyle} value={t.kcal} onChange={setTarget("kcal")} /></Field>
-              <Field label="Protein" suffix="g"><input type="number" style={inputStyle} value={t.protein} onChange={setTarget("protein")} /></Field>
-              <Field label="Kohlenhydrate" suffix="g"><input type="number" style={inputStyle} value={t.carbs} onChange={setTarget("carbs")} /></Field>
-              <Field label="Fett" suffix="g"><input type="number" style={inputStyle} value={t.fat} onChange={setTarget("fat")} /></Field>
-            </div>
-          </section>
+              <section style={{ display: "grid", gap: 10 }}>
+                <SectionTitle>Tagesziele (manuell anpassbar)</SectionTitle>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <Field label="Kalorien" suffix="kcal"><input type="number" style={inputStyle} value={t.kcal} onChange={setTarget("kcal")} /></Field>
+                  <Field label="Protein" suffix="g"><input type="number" style={inputStyle} value={t.protein} onChange={setTarget("protein")} /></Field>
+                  <Field label="Kohlenhydrate" suffix="g"><input type="number" style={inputStyle} value={t.carbs} onChange={setTarget("carbs")} /></Field>
+                  <Field label="Fett" suffix="g"><input type="number" style={inputStyle} value={t.fat} onChange={setTarget("fat")} /></Field>
+                </div>
+              </section>
 
-          <section style={{ display: "grid", gap: 12 }}>
-            <SectionTitle>Zusatzfunktionen</SectionTitle>
-            <Toggle on={!!p.weekBudget} onClick={() => setP({ ...p, weekBudget: !p.weekBudget })} label="Wochenbudget anzeigen" sub="Kalorien über die ganze Woche statt nur pro Tag" />
-            <Field label="Wasserziel" suffix="ml, leer = aus Gewicht">
-              <input type="number" inputMode="numeric" style={inputStyle} value={p.waterGoal} onChange={(e) => setP({ ...p, waterGoal: e.target.value })} placeholder={String(derivedWaterGoal(p))} />
-            </Field>
-          </section>
+              <section style={{ display: "grid", gap: 12 }}>
+                <SectionTitle>Budget & Wasser</SectionTitle>
+                <Toggle on={!!p.weekBudget} onClick={() => setP({ ...p, weekBudget: !p.weekBudget })} label="Wochenbudget anzeigen" sub="Kalorien über die ganze Woche statt nur pro Tag" />
+                <Field label="Wasserziel" suffix="ml, leer = aus Gewicht">
+                  <input type="number" inputMode="numeric" style={inputStyle} value={p.waterGoal} onChange={(e) => setP({ ...p, waterGoal: e.target.value })} placeholder={String(derivedWaterGoal(p))} />
+                </Field>
+              </section>
+            </>
+          )}
 
-          <section style={{ display: "grid", gap: 10 }}>
-            <SectionTitle>Kochvorschläge</SectionTitle>
-            <p style={{ fontSize: 13, color: COLORS.muted, lineHeight: 1.5, margin: 0 }}>
-              Lebensmittel, die die KI bei den Kochvorschlägen meiden soll — etwa Unverträglichkeiten oder was du einfach nicht magst.
-            </p>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input style={{ ...inputStyle, flex: 1 }} value={exclInput} onChange={(e) => setExclInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addExcl(); } }} placeholder="z. B. Koriander" />
-              <button onClick={addExcl} disabled={!exclInput.trim()}
-                style={{ minHeight: 48, padding: "0 18px", border: "none", borderRadius: 12, background: exclInput.trim() ? COLORS.green : COLORS.line, color: exclInput.trim() ? COLORS.onAccent : COLORS.muted, fontSize: 15, fontWeight: 700, fontFamily: "inherit", cursor: exclInput.trim() ? "pointer" : "default" }}>Hinzufügen</button>
-            </div>
-            {exclusions.length > 0 && (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 2 }}>
-                {exclusions.map((x, i) => (
-                  <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: COLORS.card, border: "1px solid var(--line)", borderRadius: 99, padding: "6px 10px 6px 12px", fontSize: 13.5 }}>
-                    {x}
-                    <button aria-label={`${x} entfernen`} onClick={() => removeExcl(i)} style={{ border: "none", background: "transparent", color: COLORS.muted, cursor: "pointer", padding: 0, display: "flex" }}><Icon d={ICONS.close} size={14} /></button>
-                  </span>
-                ))}
-              </div>
-            )}
-          </section>
+          {tab === "tech" && (
+            <>
+              <section style={{ display: "grid", gap: 12 }}>
+                <SectionTitle>Darstellung</SectionTitle>
+                <Toggle on={theme === "dark"} onClick={onToggleTheme} label={theme === "dark" ? "🌙 Dark Mode" : "☀️ Light Mode"} sub="Dunkles oder helles Design" />
+              </section>
 
-          <section style={{ display: "grid", gap: 10 }}>
-            <SectionTitle>KI-Analyse (optional)</SectionTitle>
-            <Field label="Anthropic API-Key">
-              <input type="password" autoComplete="off" style={inputStyle} value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-ant-..." />
-            </Field>
-            <p style={{ fontSize: 12.5, color: COLORS.muted, lineHeight: 1.5, margin: "-4px 0 0" }}>
-              Nur lokal auf diesem Gerät gespeichert und direkt an die Anthropic-API geschickt. Ohne Key funktionieren Listen, eigene Gerichte und manuelle Einträge trotzdem.
-            </p>
-          </section>
+              <section style={{ display: "grid", gap: 12 }}>
+                <SectionTitle>Eingabemethoden</SectionTitle>
+                <p style={{ fontSize: 13, color: COLORS.muted, lineHeight: 1.5, margin: 0 }}>
+                  Blendet einzelne Reiter im „Essen hinzufügen" Fenster aus. „Meine Gerichte" bleibt immer verfügbar.
+                </p>
+                <Toggle on={!!p.features.ai} onClick={() => setFeat("ai")} label="KI Schätzung" sub="Reiter Foto und Text" />
+                <Toggle on={!!p.features.gourmet} onClick={() => setFeat("gourmet")} label="Gourmet Datenbank" sub="Reiter Gourmet" />
+                <Toggle on={!!p.features.juit} onClick={() => setFeat("juit")} label="Juit Datenbank" sub="Reiter Juit" />
+              </section>
 
-          <section style={{ display: "grid", gap: 10 }}>
-            <SectionTitle>Datensicherung</SectionTitle>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <button onClick={() => { exportData(); setMsg("Backup wurde heruntergeladen."); }} style={{ minHeight: 48, border: "1.5px solid var(--green)", borderRadius: 12, background: "transparent", color: COLORS.green, fontSize: 14.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>Daten sichern</button>
-              <button onClick={() => importRef.current?.click()} style={{ minHeight: 48, border: "1.5px solid var(--line)", borderRadius: 12, background: COLORS.card, color: COLORS.ink, fontSize: 14.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>Daten laden</button>
-            </div>
-            <input ref={importRef} type="file" accept="application/json,.json" style={{ display: "none" }}
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) importData(f, (ok, n, err) => { if (ok) { setMsg(`${n} Einträge geladen — App wird neu geladen …`); setTimeout(() => location.reload(), 800); } else setMsg("Import fehlgeschlagen: " + err); }); e.target.value = ""; }} />
-            <p style={{ fontSize: 12.5, color: COLORS.muted, lineHeight: 1.5, margin: "-2px 0 0" }}>
-              Sichert alle Einträge als Datei (ohne API-Key). Wichtig vor Gerätewechsel oder falls der Browser Daten löscht.
-            </p>
-            {msg && <div style={{ background: COLORS.greenSoft, color: COLORS.green, borderRadius: 12, padding: "10px 14px", fontSize: 13, fontWeight: 600 }}>{msg}</div>}
-          </section>
+              <section style={{ display: "grid", gap: 10 }}>
+                <SectionTitle>KI-Analyse (optional)</SectionTitle>
+                <Field label="Anthropic API-Key">
+                  <input type="password" autoComplete="off" style={inputStyle} value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-ant-..." />
+                </Field>
+                <p style={{ fontSize: 12.5, color: COLORS.muted, lineHeight: 1.5, margin: "-4px 0 0" }}>
+                  Nur lokal auf diesem Gerät gespeichert und direkt an die Anthropic-API geschickt. Ohne Key funktionieren Listen, eigene Gerichte und manuelle Einträge trotzdem.
+                </p>
+              </section>
+
+              <section style={{ display: "grid", gap: 10 }}>
+                <SectionTitle>Kochvorschläge</SectionTitle>
+                <p style={{ fontSize: 13, color: COLORS.muted, lineHeight: 1.5, margin: 0 }}>
+                  Lebensmittel, die die KI bei den Kochvorschlägen meiden soll — etwa Unverträglichkeiten oder was du einfach nicht magst.
+                </p>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input style={{ ...inputStyle, flex: 1 }} value={exclInput} onChange={(e) => setExclInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addExcl(); } }} placeholder="z. B. Koriander" />
+                  <button onClick={addExcl} disabled={!exclInput.trim()}
+                    style={{ minHeight: 48, padding: "0 18px", border: "none", borderRadius: 12, background: exclInput.trim() ? COLORS.green : COLORS.line, color: exclInput.trim() ? COLORS.onAccent : COLORS.muted, fontSize: 15, fontWeight: 700, fontFamily: "inherit", cursor: exclInput.trim() ? "pointer" : "default" }}>Hinzufügen</button>
+                </div>
+                {exclusions.length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 2 }}>
+                    {exclusions.map((x, i) => (
+                      <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: COLORS.card, border: "1px solid var(--line)", borderRadius: 99, padding: "6px 10px 6px 12px", fontSize: 13.5 }}>
+                        {x}
+                        <button aria-label={`${x} entfernen`} onClick={() => removeExcl(i)} style={{ border: "none", background: "transparent", color: COLORS.muted, cursor: "pointer", padding: 0, display: "flex" }}><Icon d={ICONS.close} size={14} /></button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section style={{ display: "grid", gap: 10 }}>
+                <SectionTitle>Datensicherung</SectionTitle>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <button onClick={() => { exportData(); setMsg("Backup wurde heruntergeladen."); }} style={{ minHeight: 48, border: "1.5px solid var(--green)", borderRadius: 12, background: "transparent", color: COLORS.green, fontSize: 14.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>Daten sichern</button>
+                  <button onClick={() => importRef.current?.click()} style={{ minHeight: 48, border: "1.5px solid var(--line)", borderRadius: 12, background: COLORS.card, color: COLORS.ink, fontSize: 14.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>Daten laden</button>
+                </div>
+                <input ref={importRef} type="file" accept="application/json,.json" style={{ display: "none" }}
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) importData(f, (ok, n, err) => { if (ok) { setMsg(`${n} Einträge geladen — App wird neu geladen …`); setTimeout(() => location.reload(), 800); } else setMsg("Import fehlgeschlagen: " + err); }); e.target.value = ""; }} />
+                <p style={{ fontSize: 12.5, color: COLORS.muted, lineHeight: 1.5, margin: "-2px 0 0" }}>
+                  Sichert alle Einträge als Datei (ohne API-Key). Wichtig vor Gerätewechsel oder falls der Browser Daten löscht.
+                </p>
+                {msg && <div style={{ background: COLORS.greenSoft, color: COLORS.green, borderRadius: 12, padding: "10px 14px", fontSize: 13, fontWeight: 600 }}>{msg}</div>}
+              </section>
+            </>
+          )}
 
           <button onClick={() => { setApiKeyLS(apiKey); onSave({ ...p, targets: { kcal: r(t.kcal), protein: r(t.protein), carbs: r(t.carbs), fat: r(t.fat) } }); }}
             style={{ minHeight: 54, border: "none", borderRadius: 14, background: COLORS.green, color: COLORS.onAccent, fontSize: 16, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
@@ -2304,7 +2329,7 @@ function TellerApp() {
 
       <BottomNav view={view} setView={setView} />
 
-      {sheet && <AddSheet mealId={sheet} onAdd={addEntry} onClose={() => setSheet(null)} />}
+      {sheet && <AddSheet mealId={sheet} onAdd={addEntry} onClose={() => setSheet(null)} features={profile.features} />}
       {showSuggest && <SuggestSheet targets={targets} day={day} onAdd={addEntry} onClose={() => { setShowSuggest(false); refreshSuggestCount(); }} onChanged={refreshSuggestCount} />}
       {showSettings && <Settings profile={profile} theme={theme} onToggleTheme={() => applyTheme(theme === "dark" ? "light" : "dark")} onSave={saveProfile} onClose={() => setShowSettings(false)} />}
     </div>
