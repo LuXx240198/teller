@@ -520,26 +520,24 @@ const MEALS = [
   { id: "snack", label: "Snacks", share: 0.1, emoji: "🍎" },
 ];
 
-/* Neue Einrichtung: Alltag, Sport, Energie, Stoffwechsel */
-const ALLTAG = [
-  { id: "min", label: "Sehr wenig Bewegung", sub: "überwiegend sitzende Tätigkeit", f: 1.2 },
-  { id: "light", label: "Leicht aktiv", sub: "viel Gehen im Alltag", f: 1.375 },
-  { id: "mod", label: "Mäßig aktiv", sub: "regelmäßige Bewegung", f: 1.55 },
-  { id: "active", label: "Aktiv", sub: "körperlich anstrengender Beruf", f: 1.725 },
-  { id: "veryactive", label: "Sehr aktiv", sub: "harte körperliche Arbeit", f: 1.9 },
+/* Neue Einrichtung: Alltagsbewegung, Training, Energie, Stoffwechsel */
+/* Feld 1 — leichte Alltagsbewegung (gehen, unterwegs sein). Multiplikator auf den Grundumsatz. */
+const MOVEMENT = [
+  { id: "min", label: "Kaum", sub: "überwiegend sitzend", f: 1.2 },
+  { id: "some", label: "Etwas", sub: "gelegentlich unterwegs", f: 1.35 },
+  { id: "reg", label: "Regelmäßig", sub: "täglich viel gehen", f: 1.5 },
+  { id: "much", label: "Viel", sub: "den ganzen Tag auf den Beinen", f: 1.65 },
 ];
-const SPORT_FREQ = [
-  { id: "none", label: "Kein Sport", bonus: 0 },
-  { id: "1-2", label: "1 bis 2x pro Woche", bonus: 0.05 },
-  { id: "3-4", label: "3 bis 4x pro Woche", bonus: 0.10 },
-  { id: "5-6", label: "5 bis 6x pro Woche", bonus: 0.15 },
-  { id: "daily", label: "Täglich", bonus: 0.20 },
+/* Feld 2 — intensives Training (Gym, Joggen). Verbrauch wird real gerechnet und oben draufgelegt. */
+const TRAINING = [
+  { id: "none", label: "Nie", perWeek: 0 },
+  { id: "1-2", label: "1 bis 2x pro Woche", perWeek: 1.5 },
+  { id: "3-4", label: "3 bis 4x pro Woche", perWeek: 3.5 },
+  { id: "5-6", label: "5 bis 6x pro Woche", perWeek: 5.5 },
+  { id: "daily", label: "Täglich", perWeek: 7 },
 ];
-const SPORT_TYPE = [
-  { id: "strength", label: "Kraft" },
-  { id: "endurance", label: "Ausdauer" },
-  { id: "mixed", label: "Gemischt" },
-];
+const TRAIN_MET = 7;   // forderndes Training (Gym/Joggen), MET-Wert
+const TRAIN_MIN = 60;  // Minuten je Einheit
 const ENERGY = [
   { id: "normal", label: "Normaler Energieverbrauch", adj: 0 },
   { id: "low", label: "Eher niedriger Energieverbrauch", adj: -0.08 },
@@ -596,12 +594,14 @@ function monthDates(year, month) {
 /* Alte Profile auf das neue Schema heben (ohne die gespeicherten Ziele zu ändern) */
 function migrateProfile(p) {
   if (!p) return p;
-  if (!p.alltag) {
-    const map = { "1.2": "min", "1.375": "light", "1.55": "mod", "1.725": "active" };
-    p.alltag = map[p.activity] || "light";
+  // Alltagsbewegung aus altem alltag oder activity herleiten
+  if (!p.movement) {
+    const fromAlltag = { min: "min", light: "some", mod: "reg", active: "much", veryactive: "much" };
+    const fromFactor = { "1.2": "min", "1.375": "some", "1.55": "reg", "1.725": "much", "1.9": "much" };
+    p.movement = fromAlltag[p.alltag] || fromFactor[p.activity] || "some";
   }
-  if (!p.sportFreq) p.sportFreq = "none";
-  if (!p.sportType) p.sportType = "mixed";
+  // Training aus altem sportFreq übernehmen (gleiche IDs)
+  if (!p.training) p.training = p.sportFreq || "none";
   if (!p.energy) p.energy = "normal";
   if (p.metab == null) p.metab = 0;
   if (p.targetWeight == null) p.targetWeight = "";
@@ -621,17 +621,21 @@ function derivedWaterGoal(p) {
 function calcTargets(p) {
   const w = Number(p.weight) || 0, h = Number(p.height) || 0, a = Number(p.age) || 0;
   const bmr = p.sex === "m" ? 10 * w + 6.25 * h - 5 * a + 5 : 10 * w + 6.25 * h - 5 * a - 161;
-  const alltag = (ALLTAG.find((x) => x.id === p.alltag) || {}).f || 1.375;
-  const sport = (SPORT_FREQ.find((x) => x.id === p.sportFreq) || {}).bonus || 0;
-  const pal = alltag + sport;
+  // Alltagsbedarf: Grundumsatz mal leichte Bewegung
+  const move = (MOVEMENT.find((x) => x.id === p.movement) || {}).f || 1.35;
+  const base = bmr * move;
+  // Trainingsverbrauch: MET mal Gewicht mal Dauer, pro Woche, auf den Tag umgelegt
+  const perWeek = (TRAINING.find((x) => x.id === p.training) || {}).perWeek || 0;
+  const trainDaily = (TRAIN_MET * w * (TRAIN_MIN / 60) * perWeek) / 7;
   const energy = (ENERGY.find((x) => x.id === p.energy) || {}).adj || 0;
   const metab = (Number(p.metab) || 0) / 100;
   const goal = GOALS.find((g) => g.id === p.goal) || GOALS[1];
-  let kcal = bmr * pal * (1 + energy) * (1 + metab) + goal.delta;
+  let kcal = (base + trainDaily) * (1 + energy) * (1 + metab) + goal.delta;
   kcal = Math.max(1200, Math.round(kcal / 10) * 10);
+  // Protein: an Ziel und Trainingsumfang gekoppelt
   let pgkg = p.goal === "lose" ? 2.0 : 1.8;
-  if (p.sportType === "strength") pgkg += 0.2;
-  else if (p.sportType === "mixed") pgkg += 0.1;
+  if (perWeek >= 5) pgkg += 0.2;
+  else if (perWeek >= 3) pgkg += 0.1;
   const protein = Math.round(w * pgkg);
   const fat = Math.round((kcal * 0.28) / 9);
   const carbs = Math.max(0, Math.round((kcal - protein * 4 - fat * 9) / 4));
@@ -947,23 +951,21 @@ function PersonalFields({ p, setP, showAdvanced, setShowAdvanced }) {
           </select>
         </Field>
       </div>
-      <Field label="Wie aktiv bist du im Alltag?">
-        <select style={selectStyle} value={p.alltag} onChange={set("alltag")}>
-          {ALLTAG.map((a) => <option key={a.id} value={a.id}>{a.label} — {a.sub}</option>)}
+      <Field label="Leichte Bewegung im Alltag">
+        <select style={selectStyle} value={p.movement} onChange={set("movement")}>
+          {MOVEMENT.map((m) => <option key={m.id} value={m.id}>{m.label} — {m.sub}</option>)}
         </select>
       </Field>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        <Field label="Wie oft Sport?">
-          <select style={selectStyle} value={p.sportFreq} onChange={set("sportFreq")}>
-            {SPORT_FREQ.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-          </select>
-        </Field>
-        <Field label="Art des Sports">
-          <select style={selectStyle} value={p.sportType} onChange={set("sportType")}>
-            {SPORT_TYPE.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-          </select>
-        </Field>
-      </div>
+      <Field label="Intensives Training (Gym, Joggen)">
+        <select style={selectStyle} value={p.training} onChange={set("training")}>
+          {TRAINING.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+        </select>
+      </Field>
+      {p.training !== "none" && (
+        <div style={{ fontSize: 12, color: COLORS.muted, lineHeight: 1.5, marginTop: -6 }}>
+          Gerechnet mit rund 60 Minuten pro Einheit. Der Verbrauch steigt mit deinem Gewicht und der Häufigkeit.
+        </div>
+      )}
       <Field label="Persönlicher Energieverbrauch">
         <select style={selectStyle} value={p.energy} onChange={set("energy")}>
           {ENERGY.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
@@ -1004,7 +1006,7 @@ function ResultBox({ t }) {
 function Onboarding({ onDone }) {
   const [p, setP] = useState({
     sex: "m", age: "", height: "", weight: "", targetWeight: "", goal: "keep",
-    alltag: "mod", sportFreq: "3-4", sportType: "mixed", energy: "normal", metab: 0,
+    movement: "some", training: "3-4", energy: "normal", metab: 0,
   });
   const [adv, setAdv] = useState(false);
   const ready = p.age && p.height && p.weight;
